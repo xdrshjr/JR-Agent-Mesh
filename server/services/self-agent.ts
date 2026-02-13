@@ -18,6 +18,7 @@ import { eq, asc } from 'drizzle-orm';
 
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
+import { CredentialRepository } from '../db/repositories/index.js';
 import { broadcastToAllClients } from '../websocket/server.js';
 import { logger } from '../utils/logger.js';
 import type { ServerMessageType } from '../../shared/types.js';
@@ -66,6 +67,7 @@ export class SelfAgentService {
   private currentMessageId: string | null = null;
   private dispatchMode = false;
   private agentProcessManager: AgentProcessManager;
+  private credentialRepo: CredentialRepository;
   private dataDir: string;
   private unsubscribe: (() => void) | null = null;
 
@@ -75,6 +77,7 @@ export class SelfAgentService {
   constructor(options: SelfAgentServiceOptions) {
     this.dataDir = options.dataDir;
     this.agentProcessManager = options.agentProcessManager;
+    this.credentialRepo = new CredentialRepository();
 
     // Load settings from DB
     const { provider, modelId, systemPrompt } = this.loadSettings();
@@ -138,19 +141,24 @@ export class SelfAgentService {
       return process.env[envKey];
     }
 
-    // Try credentials table
-    try {
-      const db = getDb();
-      const cred = db.select().from(schema.credentials)
-        .where(eq(schema.credentials.provider, provider))
-        .get();
-      if (cred) {
-        // Credential is encrypted — for now use env vars; full decryption via CredentialStore
-        // will be integrated in 07-settings-and-credentials
-        return undefined;
+    // Try credentials table (decrypt from encrypted storage)
+    const credKeyMap: Record<string, string> = {
+      anthropic: 'anthropic_key',
+      openai: 'openai_key',
+      google: 'google_key',
+      xai: 'xai_key',
+      groq: 'groq_key',
+      custom: 'custom_key',
+    };
+
+    const credKey = credKeyMap[provider];
+    if (credKey) {
+      try {
+        const value = this.credentialRepo.get(credKey);
+        if (value) return value;
+      } catch {
+        // Decryption failed or DB not available
       }
-    } catch {
-      // DB not available or query failed
     }
 
     return undefined;
@@ -405,6 +413,13 @@ export class SelfAgentService {
     }
 
     logger.info('SelfAgent', `Switched model to ${provider}/${modelId}`);
+  }
+
+  // --- System Prompt ---
+
+  setSystemPrompt(prompt: string): void {
+    this.agent.setSystemPrompt(this.buildSystemPrompt(prompt || undefined));
+    logger.info('SelfAgent', 'System prompt updated');
   }
 
   // --- Dispatch Mode ---

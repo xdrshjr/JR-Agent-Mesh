@@ -8,3 +8,4 @@ export { FileTransferRepository } from './file-transfer-repository.js';
 
 export type { ConversationListOptions, ConversationWithMessages } from './conversation-repository.js';
 export type { CredentialInfo } from './credential-repository.js';
+export { maskCredentialValue } from './credential-repository.js';

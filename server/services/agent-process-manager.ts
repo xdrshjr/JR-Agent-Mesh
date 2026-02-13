@@ -92,6 +92,11 @@ export class AgentProcessManager {
     logger.info('AgentProcessManager', `Initialized (maxProcesses: ${this.maxProcesses})`);
   }
 
+  setMaxProcesses(max: number): void {
+    this.maxProcesses = max;
+    logger.info('AgentProcessManager', `Max processes updated to ${max}`);
+  }
+
   // --- Create ---
 
   async createProcess(

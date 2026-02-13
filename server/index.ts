@@ -89,6 +89,7 @@ async function main() {
   const expressApp = createExpressApp({
     dataDir: DATA_DIR,
     agentProcessManager,
+    selfAgentService: selfAgent,
   });
 
   // Step 6: Initialize Next.js

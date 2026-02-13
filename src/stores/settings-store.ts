@@ -1,19 +1,78 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
-interface Credential {
-  id: string;
-  name: string;
+// --- Credential Types ---
+
+export interface CredentialType {
+  key: string;
+  displayName: string;
   provider: string;
-  maskedValue: string;
+  placeholder: string;
+  description: string;
 }
+
+export const CREDENTIAL_TYPES: CredentialType[] = [
+  {
+    key: 'anthropic_key',
+    displayName: 'Anthropic API Key',
+    provider: 'anthropic',
+    placeholder: 'sk-ant-...',
+    description: 'Used for Claude models and Claude Code',
+  },
+  {
+    key: 'openai_key',
+    displayName: 'OpenAI API Key',
+    provider: 'openai',
+    placeholder: 'sk-...',
+    description: 'Used for GPT models, OpenCode, and Codex',
+  },
+  {
+    key: 'google_key',
+    displayName: 'Google AI API Key',
+    provider: 'google',
+    placeholder: 'AIza...',
+    description: 'Used for Gemini models',
+  },
+  {
+    key: 'xai_key',
+    displayName: 'xAI API Key',
+    provider: 'xai',
+    placeholder: 'xai-...',
+    description: 'Used for Grok models',
+  },
+  {
+    key: 'groq_key',
+    displayName: 'Groq API Key',
+    provider: 'groq',
+    placeholder: 'gsk_...',
+    description: 'Used for Groq inference acceleration',
+  },
+  {
+    key: 'custom_key',
+    displayName: 'Custom API Key',
+    provider: 'custom',
+    placeholder: '',
+    description: 'Used for custom OpenAI-compatible API',
+  },
+];
+
+// --- Credential Info (from server) ---
+
+export interface CredentialInfo {
+  key: string;
+  displayName: string;
+  provider: string | null;
+  hasValue: boolean;
+  maskedValue: string | null;
+  updatedAt: number;
+}
+
+// --- Settings State ---
 
 interface SettingsState {
   // Self Agent
   defaultProvider: string;
   defaultModel: string;
   customApiUrl: string;
-  customApiKey: string;
   customModelId: string;
   systemPrompt: string;
 
@@ -26,15 +85,20 @@ interface SettingsState {
 
   // General
   dataRetentionDays: number;
+  agentLogRetentionDays: number;
 
-  // Credentials (fetched from server, not persisted locally)
-  credentials: Credential[];
+  // Credentials (fetched from server)
+  credentials: CredentialInfo[];
 
-  // Actions
+  // Loading states
+  isLoading: boolean;
+  isSaving: boolean;
+  isLoaded: boolean;
+
+  // Actions — local state setters
   setDefaultProvider: (provider: string) => void;
   setDefaultModel: (model: string) => void;
   setCustomApiUrl: (url: string) => void;
-  setCustomApiKey: (key: string) => void;
   setCustomModelId: (id: string) => void;
   setSystemPrompt: (prompt: string) => void;
 
@@ -44,68 +108,182 @@ interface SettingsState {
   setBrowserNotificationsEnabled: (enabled: boolean) => void;
 
   setDataRetentionDays: (days: number) => void;
+  setAgentLogRetentionDays: (days: number) => void;
 
-  setCredentials: (creds: Credential[]) => void;
-  addCredential: (cred: Credential) => void;
-  removeCredential: (id: string) => void;
+  // Server sync actions
+  fetchSettings: () => Promise<void>;
+  saveSettings: () => Promise<void>;
+  fetchCredentials: () => Promise<void>;
+  saveCredential: (key: string, value: string) => Promise<void>;
+  deleteCredential: (key: string) => Promise<void>;
 }
 
-export const useSettingsStore = create<SettingsState>()(
-  persist(
-    (set) => ({
-      defaultProvider: 'anthropic',
-      defaultModel: 'claude-sonnet-4-5-20250929',
-      customApiUrl: '',
-      customApiKey: '',
-      customModelId: '',
-      systemPrompt: '',
+export const useSettingsStore = create<SettingsState>()((set, get) => ({
+  defaultProvider: 'anthropic',
+  defaultModel: 'claude-sonnet-4-5-20250929',
+  customApiUrl: '',
+  customModelId: '',
+  systemPrompt: '',
 
-      agentConfigs: {
-        'claude-code': { cliPath: 'claude', defaultArgs: '' },
-        opencode: { cliPath: 'opencode', defaultArgs: '' },
-        codex: { cliPath: 'codex', defaultArgs: '' },
-      },
+  agentConfigs: {
+    'claude-code': { cliPath: 'claude', defaultArgs: '' },
+    opencode: { cliPath: 'opencode', defaultArgs: '' },
+    codex: { cliPath: 'codex', defaultArgs: '' },
+  },
 
-      soundEnabled: true,
-      browserNotificationsEnabled: false,
+  soundEnabled: true,
+  browserNotificationsEnabled: false,
 
-      dataRetentionDays: 30,
+  dataRetentionDays: 90,
+  agentLogRetentionDays: 30,
 
-      credentials: [],
+  credentials: [],
 
-      setDefaultProvider: (provider) => set({ defaultProvider: provider }),
-      setDefaultModel: (model) => set({ defaultModel: model }),
-      setCustomApiUrl: (url) => set({ customApiUrl: url }),
-      setCustomApiKey: (key) => set({ customApiKey: key }),
-      setCustomModelId: (id) => set({ customModelId: id }),
-      setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
+  isLoading: false,
+  isSaving: false,
+  isLoaded: false,
 
-      setAgentConfig: (typeId, config) =>
-        set((s) => ({
-          agentConfigs: { ...s.agentConfigs, [typeId]: config },
-        })),
+  setDefaultProvider: (provider) => set({ defaultProvider: provider }),
+  setDefaultModel: (model) => set({ defaultModel: model }),
+  setCustomApiUrl: (url) => set({ customApiUrl: url }),
+  setCustomModelId: (id) => set({ customModelId: id }),
+  setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
 
-      setSoundEnabled: (enabled) => set({ soundEnabled: enabled }),
-      setBrowserNotificationsEnabled: (enabled) => set({ browserNotificationsEnabled: enabled }),
+  setAgentConfig: (typeId, config) =>
+    set((s) => ({
+      agentConfigs: { ...s.agentConfigs, [typeId]: config },
+    })),
 
-      setDataRetentionDays: (days) => set({ dataRetentionDays: days }),
+  setSoundEnabled: (enabled) => set({ soundEnabled: enabled }),
+  setBrowserNotificationsEnabled: (enabled) => set({ browserNotificationsEnabled: enabled }),
 
-      setCredentials: (creds) => set({ credentials: creds }),
-      addCredential: (cred) => set((s) => ({ credentials: [...s.credentials, cred] })),
-      removeCredential: (id) =>
-        set((s) => ({ credentials: s.credentials.filter((c) => c.id !== id) })),
-    }),
-    {
-      name: 'jragentmesh-settings',
-      partialize: (state) => ({
-        defaultProvider: state.defaultProvider,
-        defaultModel: state.defaultModel,
-        soundEnabled: state.soundEnabled,
-        browserNotificationsEnabled: state.browserNotificationsEnabled,
-        dataRetentionDays: state.dataRetentionDays,
-        systemPrompt: state.systemPrompt,
-        agentConfigs: state.agentConfigs,
-      }),
-    },
-  ),
-);
+  setDataRetentionDays: (days) => set({ dataRetentionDays: days }),
+  setAgentLogRetentionDays: (days) => set({ agentLogRetentionDays: days }),
+
+  // --- Server Sync ---
+
+  fetchSettings: async () => {
+    set({ isLoading: true });
+    try {
+      const res = await fetch('/api/settings');
+      if (!res.ok) throw new Error('Failed to fetch settings');
+      const data = await res.json();
+
+      // Map grouped server settings to store fields
+      const selfAgent = data.self_agent || {};
+      const notification = data.notification || {};
+      const agent = data.agent || {};
+      const general = data.general || {};
+
+      set({
+        defaultProvider: selfAgent.provider ?? 'anthropic',
+        defaultModel: selfAgent.model ?? 'claude-sonnet-4-5-20250929',
+        customApiUrl: selfAgent.custom_url ?? '',
+        customModelId: selfAgent.custom_model_id ?? '',
+        systemPrompt: selfAgent.system_prompt ?? '',
+
+        soundEnabled: notification.sound !== 'false',
+        browserNotificationsEnabled: notification.browser === 'true',
+
+        dataRetentionDays: parseInt(general.conversation_retention_days ?? '90', 10),
+        agentLogRetentionDays: parseInt(general.agent_log_retention_days ?? '30', 10),
+
+        isLoaded: true,
+      });
+
+      // Parse agent configs from server
+      if (agent.cli_paths) {
+        try {
+          const cliPaths = JSON.parse(agent.cli_paths);
+          if (typeof cliPaths === 'object') {
+            set((s) => ({
+              agentConfigs: { ...s.agentConfigs, ...cliPaths },
+            }));
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    } catch (err) {
+      console.error('Failed to fetch settings:', err);
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  saveSettings: async () => {
+    const state = get();
+    set({ isSaving: true });
+    try {
+      const payload: Record<string, string> = {
+        'self_agent.provider': state.defaultProvider,
+        'self_agent.model': state.defaultModel,
+        'self_agent.custom_url': state.customApiUrl,
+        'self_agent.custom_model_id': state.customModelId,
+        'self_agent.system_prompt': state.systemPrompt,
+        'notification.sound': String(state.soundEnabled),
+        'notification.browser': String(state.browserNotificationsEnabled),
+        'general.conversation_retention_days': String(state.dataRetentionDays),
+        'general.agent_log_retention_days': String(state.agentLogRetentionDays),
+        'agent.cli_paths': JSON.stringify(state.agentConfigs),
+      };
+
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) throw new Error('Failed to save settings');
+    } catch (err) {
+      console.error('Failed to save settings:', err);
+      throw err;
+    } finally {
+      set({ isSaving: false });
+    }
+  },
+
+  fetchCredentials: async () => {
+    try {
+      const res = await fetch('/api/credentials');
+      if (!res.ok) throw new Error('Failed to fetch credentials');
+      const data: CredentialInfo[] = await res.json();
+      set({ credentials: data });
+    } catch (err) {
+      console.error('Failed to fetch credentials:', err);
+    }
+  },
+
+  saveCredential: async (key: string, value: string) => {
+    const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
+    try {
+      const res = await fetch(`/api/credentials/${key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          value,
+          displayName: credType?.displayName || key,
+          provider: credType?.provider || null,
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to save credential');
+
+      // Refresh credentials list
+      await get().fetchCredentials();
+    } catch (err) {
+      console.error('Failed to save credential:', err);
+      throw err;
+    }
+  },
+
+  deleteCredential: async (key: string) => {
+    try {
+      const res = await fetch(`/api/credentials/${key}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete credential');
+
+      // Refresh credentials list
+      await get().fetchCredentials();
+    } catch (err) {
+      console.error('Failed to delete credential:', err);
+      throw err;
+    }
+  },
+}));

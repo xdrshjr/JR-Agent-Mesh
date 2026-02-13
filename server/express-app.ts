@@ -1,6 +1,7 @@
 import express from 'express';
 import { logger } from './utils/logger.js';
 import type { AgentProcessManager } from './services/agent-process-manager.js';
+import type { SelfAgentService } from './services/self-agent.js';
 import type { AgentTypeId } from '../shared/types.js';
 import { getAllAgentTypes } from './services/agent-registry.js';
 import {
@@ -9,16 +10,18 @@ import {
   SettingsRepository,
   CredentialRepository,
 } from './db/repositories/index.js';
+import { broadcastToAllClients } from './websocket/server.js';
 import { getDb } from './db/index.js';
 import * as schema from './db/schema.js';
 
 export interface ExpressAppOptions {
   dataDir: string;
   agentProcessManager: AgentProcessManager;
+  selfAgentService?: SelfAgentService;
 }
 
 export function createExpressApp(options: ExpressAppOptions) {
-  const { agentProcessManager } = options;
+  const { agentProcessManager, selfAgentService } = options;
   const app = express();
 
   // Middleware
@@ -192,7 +195,22 @@ export function createExpressApp(options: ExpressAppOptions) {
   app.get('/api/settings', (_req, res) => {
     try {
       const all = settingsRepo.getAll();
-      res.json(Object.fromEntries(all));
+      // Group settings by category prefix (e.g. "self_agent.provider" → self_agent)
+      const grouped: Record<string, Record<string, string>> = {};
+      for (const [key, value] of all) {
+        const dotIndex = key.indexOf('.');
+        if (dotIndex > 0) {
+          const category = key.substring(0, dotIndex);
+          const field = key.substring(dotIndex + 1);
+          if (!grouped[category]) grouped[category] = {};
+          grouped[category][field] = value;
+        } else {
+          // Keys without a dot go into a "general" bucket
+          if (!grouped['general']) grouped['general'] = {};
+          grouped['general'][key] = value;
+        }
+      }
+      res.json(grouped);
     } catch (err: any) {
       logger.error('REST', 'Failed to get settings', err);
       res.status(500).json({ error: err.message });
@@ -206,15 +224,65 @@ export function createExpressApp(options: ExpressAppOptions) {
         res.status(400).json({ error: 'Request body must be a key-value object' });
         return;
       }
+
+      // Phase 1: Persist all settings to DB first
+      const changedKeys: string[] = [];
       for (const [key, value] of Object.entries(entries)) {
         settingsRepo.set(key, String(value));
+        changedKeys.push(key);
       }
+
+      // Phase 2: React to changes (all values now in DB)
+      onSettingsChanged(changedKeys);
+
       res.json({ success: true });
     } catch (err: any) {
       logger.error('REST', 'Failed to update settings', err);
       res.status(500).json({ error: err.message });
     }
   });
+
+  // --- Setting Change Reactions ---
+
+  function onSettingsChanged(keys: string[]): void {
+    try {
+      // Model / provider — do a single switchModel with final values from DB
+      if (keys.includes('self_agent.provider') || keys.includes('self_agent.model')) {
+        if (selfAgentService) {
+          const provider = settingsRepo.get('self_agent.provider') || 'anthropic';
+          const model = settingsRepo.get('self_agent.model') || 'claude-sonnet-4-5-20250929';
+          selfAgentService.switchModel(provider, model);
+        }
+      }
+
+      if (keys.includes('self_agent.system_prompt')) {
+        if (selfAgentService) {
+          const value = settingsRepo.get('self_agent.system_prompt') || '';
+          selfAgentService.setSystemPrompt(value);
+        }
+      }
+
+      if (keys.includes('notification.sound') || keys.includes('notification.browser')) {
+        broadcastToAllClients('system.notification', {
+          level: 'info',
+          title: 'Settings Updated',
+          message: 'Notification settings changed',
+        });
+      }
+
+      if (keys.includes('agent.max_processes')) {
+        const raw = settingsRepo.get('agent.max_processes');
+        if (raw) {
+          const max = parseInt(raw, 10);
+          if (!isNaN(max) && max > 0) {
+            agentProcessManager.setMaxProcesses(max);
+          }
+        }
+      }
+    } catch (err) {
+      logger.error('REST', 'Error in onSettingsChanged', err);
+    }
+  }
 
   // --- Credentials ---
 

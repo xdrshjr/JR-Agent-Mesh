@@ -16,7 +16,27 @@ export interface CredentialInfo {
   displayName: string;
   provider: string | null;
   hasValue: boolean;
+  maskedValue: string | null;
   updatedAt: number;
+}
+
+/**
+ * Mask a credential value for display.
+ * Keeps prefix (up to first dash + 5 chars, max 8) + "•••••" + last 3 chars.
+ * Per spec: prefix = value.substring(0, min(indexOf("-") + 5, 8))
+ * When no dash: indexOf("-") = -1, so -1 + 5 = 4 chars prefix.
+ */
+export function maskCredentialValue(value: string): string {
+  if (value.length <= 8) {
+    return '••••••••';
+  }
+  const dashIndex = value.indexOf('-');
+  const prefixEnd = Math.min(dashIndex + 5, 8);
+  // Ensure at least 1 char prefix
+  const safeEnd = Math.max(prefixEnd, 1);
+  const prefix = value.substring(0, safeEnd);
+  const suffix = value.substring(value.length - 3);
+  return `${prefix}•••••${suffix}`;
 }
 
 export class CredentialRepository {
@@ -27,13 +47,29 @@ export class CredentialRepository {
     const db = getDb();
     const rows = db.select().from(schema.credentials).all();
 
-    return rows.map((row) => ({
-      key: row.key,
-      displayName: row.displayName,
-      provider: row.provider,
-      hasValue: !!row.encryptedValue,
-      updatedAt: row.updatedAt,
-    }));
+    return rows.map((row) => {
+      let maskedValue: string | null = null;
+      if (row.encryptedValue) {
+        try {
+          const plaintext = decrypt(
+            { encrypted: row.encryptedValue, iv: row.iv, authTag: row.authTag },
+            getEncryptionKey(),
+          );
+          maskedValue = maskCredentialValue(plaintext);
+        } catch {
+          maskedValue = '••••••••';
+        }
+      }
+
+      return {
+        key: row.key,
+        displayName: row.displayName,
+        provider: row.provider,
+        hasValue: !!row.encryptedValue,
+        maskedValue,
+        updatedAt: row.updatedAt,
+      };
+    });
   }
 
   /**
