@@ -9,8 +9,7 @@ import { getAgentType } from './agent-registry.js';
 import { RingBuffer, ClaudeCodeParser, GenericCLIParser, type OutputParser } from './output-parsers.js';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
-import { createMessage } from '../websocket/protocol.js';
-import { getConnectedClients } from '../websocket/server.js';
+import { broadcastToAllClients, isBackpressured, getConnectedClients } from '../websocket/server.js';
 import { logger } from '../utils/logger.js';
 import type { ServerMessageType } from '../../shared/types.js';
 
@@ -386,20 +385,36 @@ export class AgentProcessManager {
     // 1. Append to ring buffer
     agentProcess.outputBuffer.append(rawData);
 
-    // 2. Parse using the agent's parser
+    // 2. Check backpressure — if all clients are backpressured, skip WS push
+    //    but still parse and log to DB
+    let allBackpressured = false;
+    const clients = getConnectedClients();
+    if (clients.size > 0) {
+      allBackpressured = true;
+      for (const client of clients) {
+        if (!isBackpressured(client)) {
+          allBackpressured = false;
+          break;
+        }
+      }
+    }
+
+    // 3. Parse using the agent's parser
     const parsed = agentProcess.parser.parse(rawData);
 
-    // 3. Append to structured log and schedule throttled WS push
+    // 4. Append to structured log and schedule throttled WS push
     for (const item of parsed) {
       const entry = { timestamp: Date.now(), ...item };
       agentProcess.outputLog.push(entry);
       const currentIndex = agentProcess.outputLog.length - 1;
 
-      // 4. Throttled WebSocket push (with correct index per item)
-      this.throttledBroadcast(agentProcess.id, item, currentIndex);
+      // 5. Throttled WebSocket push (skip if all clients are backpressured)
+      if (!allBackpressured) {
+        this.throttledBroadcast(agentProcess.id, item, currentIndex);
+      }
     }
 
-    // 5. Schedule batch DB flush
+    // 6. Schedule batch DB flush (always persist regardless of backpressure)
     this.scheduleFlush(agentProcess.id, parsed);
   }
 
@@ -762,13 +777,7 @@ export class AgentProcessManager {
   }
 
   private broadcast(type: ServerMessageType, payload: unknown): void {
-    const clients = getConnectedClients();
-    const message = createMessage(type, payload);
-    for (const client of clients) {
-      if (client.readyState === 1 /* OPEN */) {
-        client.send(message);
-      }
-    }
+    broadcastToAllClients(type, payload);
   }
 
   private clearTimers(agentId: string): void {

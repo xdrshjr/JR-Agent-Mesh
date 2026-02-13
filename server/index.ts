@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import next from 'next';
 import { createExpressApp } from './express-app.js';
-import { initWebSocketServer, setActiveAgentsProvider } from './websocket/server.js';
+import { initWebSocketServer, setActiveAgentsProvider, stopHeartbeat } from './websocket/server.js';
 import { initDatabase, closeDatabase, getDb } from './db/index.js';
 import * as schema from './db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -122,6 +122,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info('Server', 'Shutting down...');
+    stopHeartbeat();
     selfAgent.destroy();
     await agentProcessManager.destroy();
     httpServer.close();

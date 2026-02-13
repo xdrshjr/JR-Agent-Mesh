@@ -2,6 +2,15 @@ import type { WebSocketMessage } from '../../shared/types.js';
 
 type MessageCallback = (payload: unknown) => void;
 
+// Ping interval matches server heartbeat cycle
+const PING_INTERVAL_MS = 30_000;
+
+// Fragment reassembly types
+interface FragmentBuffer {
+  total: number;
+  received: Map<number, string>;
+}
+
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private url: string;
@@ -9,7 +18,11 @@ export class WebSocketClient {
   private requestCallbacks = new Map<string, (payload: unknown) => void>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   private _connected = false;
+
+  // Fragment reassembly buffers keyed by fragmentId
+  private fragmentBuffers = new Map<string, FragmentBuffer>();
 
   constructor(url: string) {
     this.url = url;
@@ -26,11 +39,14 @@ export class WebSocketClient {
       this.ws.onopen = () => {
         this._connected = true;
         this.reconnectAttempt = 0;
+        this.startPing();
         this.emit('connected', {});
       };
 
       this.ws.onclose = () => {
         this._connected = false;
+        this.stopPing();
+        this.fragmentBuffers.clear();
         this.emit('disconnected', {});
         this.scheduleReconnect();
       };
@@ -42,6 +58,17 @@ export class WebSocketClient {
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data as string) as WebSocketMessage;
+
+          // Handle fragment reassembly
+          if (msg.type === '__fragment') {
+            this.handleFragment(msg.payload as {
+              fragmentId: string;
+              index: number;
+              total: number;
+              data: string;
+            });
+            return;
+          }
 
           // Handle request-response callbacks
           if (msg.requestId && this.requestCallbacks.has(msg.requestId)) {
@@ -61,6 +88,7 @@ export class WebSocketClient {
   }
 
   disconnect() {
+    this.stopPing();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -70,6 +98,7 @@ export class WebSocketClient {
       this.ws = null;
     }
     this._connected = false;
+    this.fragmentBuffers.clear();
   }
 
   send(type: string, payload: unknown, requestId?: string) {
@@ -109,6 +138,59 @@ export class WebSocketClient {
     if (callbacks) {
       for (const cb of callbacks) {
         cb(payload);
+      }
+    }
+  }
+
+  private startPing() {
+    this.stopPing();
+    this.pingTimer = setInterval(() => {
+      this.send('ping', {});
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopPing() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  private handleFragment(fragment: {
+    fragmentId: string;
+    index: number;
+    total: number;
+    data: string;
+  }) {
+    let buffer = this.fragmentBuffers.get(fragment.fragmentId);
+    if (!buffer) {
+      buffer = { total: fragment.total, received: new Map() };
+      this.fragmentBuffers.set(fragment.fragmentId, buffer);
+    }
+
+    buffer.received.set(fragment.index, fragment.data);
+
+    // Check if all fragments are received
+    if (buffer.received.size === buffer.total) {
+      // Reassemble in order
+      const parts: string[] = [];
+      for (let i = 0; i < buffer.total; i++) {
+        parts.push(buffer.received.get(i)!);
+      }
+      this.fragmentBuffers.delete(fragment.fragmentId);
+
+      // Parse the reassembled message
+      try {
+        const msg = JSON.parse(parts.join('')) as WebSocketMessage;
+
+        if (msg.requestId && this.requestCallbacks.has(msg.requestId)) {
+          this.requestCallbacks.get(msg.requestId)!(msg.payload);
+          this.requestCallbacks.delete(msg.requestId);
+        }
+
+        this.emit(msg.type, msg.payload);
+      } catch {
+        // Ignore malformed reassembled messages
       }
     }
   }

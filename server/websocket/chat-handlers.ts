@@ -1,5 +1,5 @@
 import { registerHandler } from './handler.js';
-import { createMessage } from './protocol.js';
+import { sendToClient } from './server.js';
 import { logger } from '../utils/logger.js';
 import type { SelfAgentService } from '../services/self-agent.js';
 import type {
@@ -60,10 +60,9 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
     const conversationId = await selfAgent.createConversation();
     logger.info('ChatHandler', `New conversation created: ${conversationId}`);
 
-    // Send the new conversation info back
-    ws.send(createMessage('chat.new_conversation_created', {
+    sendToClient(ws, 'chat.new_conversation_created', {
       conversationId,
-    }));
+    });
   });
 
   // chat.load_conversation — User loads an existing conversation
@@ -94,18 +93,18 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
         createdAt: msg.createdAt,
       }));
 
-      ws.send(createMessage('chat.conversation_loaded', {
+      sendToClient(ws, 'chat.conversation_loaded', {
         conversationId: data.conversationId,
         messages,
-      }));
+      });
 
       logger.info('ChatHandler', `Loaded conversation ${data.conversationId} with ${messages.length} messages`);
     } catch (err: any) {
       logger.error('ChatHandler', `Failed to load conversation ${data.conversationId}`, err);
-      ws.send(createMessage('chat.error', {
+      sendToClient(ws, 'chat.error', {
         conversationId: data.conversationId,
         error: err.message,
-      }));
+      });
     }
   });
 

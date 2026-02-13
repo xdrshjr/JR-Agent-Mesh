@@ -1,5 +1,5 @@
 import { registerHandler } from './handler.js';
-import { createMessage } from './protocol.js';
+import { sendToClient } from './server.js';
 import { logger } from '../utils/logger.js';
 import type { AgentProcessManager } from '../services/agent-process-manager.js';
 import type {
@@ -18,11 +18,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
 
     if (!data.typeId) {
       logger.warn('AgentHandler', 'Invalid agent.create payload: missing typeId');
-      ws.send(createMessage('system.notification', {
+      sendToClient(ws, 'system.notification', {
         level: 'error',
         title: 'Create Failed',
         message: 'Agent type is required.',
-      }));
+      });
       return;
     }
 
@@ -37,11 +37,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
       // agent.created is already broadcast by AgentProcessManager
     } catch (err: any) {
       logger.error('AgentHandler', 'Failed to create agent', err);
-      ws.send(createMessage('system.notification', {
+      sendToClient(ws, 'system.notification', {
         level: 'error',
         title: 'Create Failed',
         message: err.message,
-      }));
+      });
     }
   });
 
@@ -75,11 +75,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
       logger.info('AgentHandler', `Agent stopped: ${data.agentId}`);
     } catch (err: any) {
       logger.error('AgentHandler', `Failed to stop agent ${data.agentId}`, err);
-      ws.send(createMessage('system.notification', {
+      sendToClient(ws, 'system.notification', {
         level: 'error',
         title: 'Stop Failed',
         message: err.message,
-      }));
+      });
     }
   });
 
@@ -97,11 +97,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
       logger.info('AgentHandler', `Agent restarted: ${data.agentId}`);
     } catch (err: any) {
       logger.error('AgentHandler', `Failed to restart agent ${data.agentId}`, err);
-      ws.send(createMessage('system.notification', {
+      sendToClient(ws, 'system.notification', {
         level: 'error',
         title: 'Restart Failed',
         message: err.message,
-      }));
+      });
     }
   });
 
@@ -119,11 +119,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
       logger.info('AgentHandler', `Agent deleted: ${data.agentId}`);
     } catch (err: any) {
       logger.error('AgentHandler', `Failed to delete agent ${data.agentId}`, err);
-      ws.send(createMessage('system.notification', {
+      sendToClient(ws, 'system.notification', {
         level: 'error',
         title: 'Delete Failed',
         message: err.message,
-      }));
+      });
     }
   });
 
@@ -138,11 +138,11 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
 
     try {
       const outputs = agentProcessManager.getOutputHistory(data.agentId, data.fromIndex);
-      ws.send(createMessage('agent.output_history', {
+      sendToClient(ws, 'agent.output_history', {
         agentId: data.agentId,
         outputs,
         totalCount: outputs.length,
-      }));
+      });
     } catch (err: any) {
       logger.error('AgentHandler', `Failed to get output for ${data.agentId}`, err);
     }

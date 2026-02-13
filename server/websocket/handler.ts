@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import type { WebSocketMessage, ClientMessageType, ServerMessageType } from '../../shared/types.js';
+import type { ClientMessageType } from '../../shared/types.js';
 import { createMessage, parseMessage } from './protocol.js';
 import { logger } from '../utils/logger.js';
 
@@ -39,14 +39,5 @@ export function handleMessage(ws: WebSocket, raw: string) {
     }
   } catch (err) {
     logger.error('WS', `Handler error for ${msg.type}`, err);
-  }
-}
-
-export function broadcastToAll(clients: Set<WebSocket>, type: ServerMessageType, payload: unknown) {
-  const message = createMessage(type, payload);
-  for (const client of clients) {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(message);
-    }
   }
 }

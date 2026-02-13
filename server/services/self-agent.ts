@@ -18,8 +18,7 @@ import { eq, asc } from 'drizzle-orm';
 
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
-import { createMessage } from '../websocket/protocol.js';
-import { getConnectedClients } from '../websocket/server.js';
+import { broadcastToAllClients } from '../websocket/server.js';
 import { logger } from '../utils/logger.js';
 import type { ServerMessageType } from '../../shared/types.js';
 import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
@@ -331,13 +330,7 @@ export class SelfAgentService {
   }
 
   private broadcast<T>(type: ServerMessageType, payload: T): void {
-    const clients = getConnectedClients();
-    const message = createMessage(type, payload);
-    for (const client of clients) {
-      if (client.readyState === 1 /* OPEN */) {
-        client.send(message);
-      }
-    }
+    broadcastToAllClients(type, payload);
   }
 
   // --- User Interaction ---

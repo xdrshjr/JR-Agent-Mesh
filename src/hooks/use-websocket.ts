@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, createContext, useContext } from 'react';
+import React, { useEffect, useRef, useState, useCallback, createContext, useContext } from 'react';
 import { WebSocketClient } from '@/lib/websocket-client';
 import { useAgentStore } from '@/stores/agent-store';
 import { useChatStore } from '@/stores/chat-store';
@@ -22,6 +22,8 @@ import type {
   SystemNotificationPayload,
 } from '@/lib/types';
 
+// --- Context ---
+
 interface WebSocketContextValue {
   client: WebSocketClient | null;
   connected: boolean;
@@ -32,11 +34,36 @@ export const WebSocketContext = createContext<WebSocketContextValue>({
   connected: false,
 });
 
+// --- Hooks ---
+
+/** Access the WebSocket client and connection status from context */
 export function useWebSocketClient() {
   return useContext(WebSocketContext);
 }
 
-export function useWebSocket() {
+/** Subscribe to a specific WebSocket message type with automatic cleanup */
+export function useWSEvent<T = unknown>(type: string, callback: (payload: T) => void) {
+  const { client } = useWebSocketClient();
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+
+  useEffect(() => {
+    if (!client) return;
+
+    const handler = (payload: unknown) => {
+      callbackRef.current(payload as T);
+    };
+
+    client.on(type, handler);
+    return () => {
+      client.off(type, handler);
+    };
+  }, [client, type]);
+}
+
+// --- Provider Component ---
+
+export function WebSocketProvider({ children }: { children: React.ReactNode }) {
   const clientRef = useRef<WebSocketClient | null>(null);
   const [connected, setConnected] = useState(false);
 
@@ -171,5 +198,9 @@ export function useWebSocket() {
     };
   }, [setupListeners]);
 
-  return { client: clientRef.current, connected };
+  return (
+    <WebSocketContext.Provider value={{ client: clientRef.current, connected }}>
+      {children}
+    </WebSocketContext.Provider>
+  );
 }
