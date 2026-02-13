@@ -5,6 +5,8 @@ import type { AgentProcessManager } from '../services/agent-process-manager.js';
 import type {
   AgentCreatePayload,
   AgentSendInputPayload,
+  AgentSendRawInputPayload,
+  AgentResizePayload,
   AgentStopPayload,
   AgentRestartPayload,
   AgentDeletePayload,
@@ -58,6 +60,39 @@ export function registerAgentHandlers(agentProcessManager: AgentProcessManager) 
       agentProcessManager.sendInput(data.agentId, data.text);
     } catch (err: any) {
       logger.error('AgentHandler', `Failed to send input to ${data.agentId}`, err);
+    }
+  });
+
+  // agent.send_raw_input — Send raw keystrokes to a running agent (for xterm.js)
+  registerHandler('agent.send_raw_input', (_ws, payload) => {
+    const data = payload as AgentSendRawInputPayload;
+
+    if (!data.agentId || typeof data.data !== 'string') {
+      return;
+    }
+
+    try {
+      agentProcessManager.sendRawInput(data.agentId, data.data);
+    } catch (err: any) {
+      logger.error('AgentHandler', `Failed to send raw input to ${data.agentId}`, err);
+    }
+  });
+
+  // agent.resize — Sync xterm.js terminal dimensions to backend PTY
+  registerHandler('agent.resize', (_ws, payload) => {
+    const data = payload as AgentResizePayload;
+
+    if (!data.agentId || typeof data.cols !== 'number' || typeof data.rows !== 'number') {
+      return;
+    }
+    if (data.cols < 1 || data.rows < 1 || !Number.isFinite(data.cols) || !Number.isFinite(data.rows)) {
+      return;
+    }
+
+    try {
+      agentProcessManager.resizePty(data.agentId, Math.floor(data.cols), Math.floor(data.rows));
+    } catch (err: any) {
+      logger.error('AgentHandler', `Failed to resize PTY for ${data.agentId}`, err);
     }
   });
 

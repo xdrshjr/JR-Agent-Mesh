@@ -140,13 +140,19 @@ export class AgentProcessManager {
       throw new Error(`Failed to create working directory ${cwd}: ${err}`);
     }
 
-    // Create PTY process — spawn the command directly (node-pty handles PATH resolution)
+    // Create PTY process
+    // On Windows, node-pty cannot resolve .cmd/.bat scripts from PATH directly,
+    // so we spawn through cmd.exe /c to get proper PATH resolution.
     let ptyProcess: IPty;
+    const spawnCommand = process.platform === 'win32' ? 'cmd.exe' : config.command;
+    const spawnArgs = process.platform === 'win32'
+      ? ['/c', config.command, ...config.args]
+      : config.args;
     try {
-      ptyProcess = ptySpawn(config.command, config.args, {
+      ptyProcess = ptySpawn(spawnCommand, spawnArgs, {
         name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
+        cols: 80,
+        rows: 24,
         cwd,
         env,
       });
@@ -259,6 +265,38 @@ export class AgentProcessManager {
       data: { type: 'user_input', content: text } as ParsedOutput,
       index: agentProcess.outputLog.length - 1,
     });
+  }
+
+  // --- Send Raw Input (no trailing \r — for xterm.js keyboard forwarding) ---
+
+  sendRawInput(agentId: string, data: string): void {
+    const agentProcess = this.processes.get(agentId);
+    if (!agentProcess) {
+      throw new Error(`Agent not found: ${agentId}`);
+    }
+    if (agentProcess.status !== 'RUNNING') {
+      throw new Error(`Agent is not running (status: ${agentProcess.status})`);
+    }
+    if (!agentProcess.ptyProcess) {
+      throw new Error(`Agent PTY is not available`);
+    }
+
+    agentProcess.ptyProcess.write(data);
+  }
+
+  // --- Resize PTY (sync xterm.js dimensions to backend) ---
+
+  resizePty(agentId: string, cols: number, rows: number): void {
+    const agentProcess = this.processes.get(agentId);
+    if (!agentProcess || !agentProcess.ptyProcess) return;
+    if (agentProcess.status !== 'RUNNING') return;
+    if (cols < 1 || rows < 1 || cols > 500 || rows > 200) return;
+
+    try {
+      agentProcess.ptyProcess.resize(cols, rows);
+    } catch {
+      // Process may have exited between check and resize
+    }
   }
 
   // --- Stop ---

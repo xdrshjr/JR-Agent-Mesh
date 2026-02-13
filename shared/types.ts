@@ -124,6 +124,17 @@ export interface AgentSendInputPayload {
   text: string;
 }
 
+export interface AgentSendRawInputPayload {
+  agentId: string;
+  data: string;
+}
+
+export interface AgentResizePayload {
+  agentId: string;
+  cols: number;
+  rows: number;
+}
+
 export interface AgentStopPayload {
   agentId: string;
 }
@@ -255,6 +266,8 @@ export type ClientMessageType =
   | 'chat.toggle_dispatch'
   | 'agent.create'
   | 'agent.send_input'
+  | 'agent.send_raw_input'
+  | 'agent.resize'
   | 'agent.stop'
   | 'agent.restart'
   | 'agent.delete'
