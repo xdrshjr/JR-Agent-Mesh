@@ -559,6 +559,15 @@ export class SelfAgentService {
     logger.info('SelfAgent', `Steer message queued for ${conversationId}`);
   }
 
+  // --- Model Info ---
+
+  getCurrentModel(): { provider: string; model: string } {
+    return {
+      provider: this.agent.state.model.provider,
+      model: this.agent.state.model.id,
+    };
+  }
+
   // --- Model Switching ---
 
   switchModel(provider: string, modelId: string): void {

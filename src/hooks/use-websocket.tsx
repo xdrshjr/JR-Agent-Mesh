@@ -84,6 +84,13 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       if (data.currentConversationId) {
         useChatStore.getState().setCurrentConversation(data.currentConversationId);
       }
+      // Sync model selector with server's current model (from settings)
+      if (data.currentProvider) {
+        useChatStore.getState().setProvider(data.currentProvider);
+      }
+      if (data.currentModel) {
+        useChatStore.getState().setModel(data.currentModel);
+      }
     });
 
     // Chat streaming

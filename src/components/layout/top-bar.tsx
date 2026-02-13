@@ -1,6 +1,7 @@
 'use client';
 
 import { Bell, Volume2, VolumeX, Settings } from 'lucide-react';
+import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 
@@ -15,9 +16,7 @@ export function TopBar({ soundEnabled, onToggleSound, notificationCount = 0 }: T
     <header className="h-12 border-b border-[var(--border)] bg-white flex items-center justify-between px-4 shrink-0">
       {/* Left: Logo + Project Name */}
       <div className="flex items-center gap-3">
-        <div className="w-7 h-7 bg-[var(--primary)] rounded-[6px] flex items-center justify-center">
-          <span className="text-white text-xs font-bold">JR</span>
-        </div>
+        <Image src="/logo.png" alt="JRAgentMesh" width={28} height={28} className="rounded-[6px]" />
         <span className="text-sm font-semibold text-[var(--foreground)]">JRAgentMesh</span>
       </div>
 

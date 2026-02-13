@@ -22,8 +22,15 @@ let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 // Callback to get active agents for init payload
 let getActiveAgentsFn: (() => AgentInfo[]) | null = null;
 
+// Callback to get current model info for init payload
+let getCurrentModelFn: (() => { provider: string; model: string }) | null = null;
+
 export function setActiveAgentsProvider(fn: () => AgentInfo[]) {
   getActiveAgentsFn = fn;
+}
+
+export function setCurrentModelProvider(fn: () => { provider: string; model: string }) {
+  getCurrentModelFn = fn;
 }
 
 export function initWebSocketServer(httpServer: HTTPServer) {
@@ -68,11 +75,15 @@ export function initWebSocketServer(httpServer: HTTPServer) {
       logger.error('WS', 'Failed to load conversations for init', err);
     }
 
+    const currentModel = getCurrentModelFn ? getCurrentModelFn() : { provider: 'anthropic', model: 'claude-sonnet-4-5-20250929' };
+
     const initPayload: InitPayload = {
       selfAgentStatus: 'ready',
       activeAgents,
       currentConversationId: null,
       conversations,
+      currentProvider: currentModel.provider,
+      currentModel: currentModel.model,
     };
     ws.send(createMessage('init', initPayload));
 

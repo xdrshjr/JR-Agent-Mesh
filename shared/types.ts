@@ -166,6 +166,8 @@ export interface InitPayload {
   activeAgents: AgentInfo[];
   currentConversationId: string | null;
   conversations: Conversation[];
+  currentProvider: string;
+  currentModel: string;
 }
 
 export interface ChatStreamDeltaPayload {
