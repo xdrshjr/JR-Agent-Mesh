@@ -1,26 +1,82 @@
+'use client';
+
+import { useState } from 'react';
+import { useAgentStore } from '@/stores/agent-store';
+import { useAgentManager } from '@/hooks/use-agent-manager';
+import { AgentToolbar } from '@/components/agents/agent-toolbar';
+import { AgentTabBar } from '@/components/agents/agent-tab-bar';
+import { AgentDetailPanel } from '@/components/agents/agent-detail-panel';
+import { CreateAgentDialog } from '@/components/agents/create-agent-dialog';
+import { Bot } from 'lucide-react';
+
 export default function AgentsPage() {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const agents = useAgentStore((s) => s.agents);
+  const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
+  const outputs = useAgentStore((s) => s.outputs);
+  const statusFilter = useAgentStore((s) => s.statusFilter);
+  const setStatusFilter = useAgentStore((s) => s.setStatusFilter);
+  const setSelectedAgent = useAgentStore((s) => s.setSelectedAgent);
+
+  const { createAgent, sendInput, stopAgent, restartAgent, deleteAgent } = useAgentManager();
+
+  const filteredAgents =
+    statusFilter === 'all'
+      ? agents
+      : agents.filter((a) => {
+          if (statusFilter === 'RUNNING') return a.status === 'RUNNING';
+          return a.status !== 'RUNNING';
+        });
+
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+  const selectedOutputs = selectedAgentId ? outputs[selectedAgentId] || [] : [];
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <header className="h-14 border-b border-[var(--border)] flex items-center justify-between px-6">
-        <h2 className="text-sm font-medium text-[var(--muted-foreground)]">Agents</h2>
-        <button
-          className="px-3 py-1.5 bg-[var(--primary)] text-white text-sm rounded-md opacity-50 cursor-not-allowed"
-          disabled
-        >
-          New Agent
-        </button>
-      </header>
+      <AgentToolbar
+        statusFilter={statusFilter}
+        onFilterChange={setStatusFilter}
+        onNewAgent={() => setDialogOpen(true)}
+      />
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-4xl mx-auto">
-          <div className="text-center text-[var(--muted-foreground)] mt-32">
-            <p className="text-lg font-light mb-2">No agents running</p>
-            <p className="text-sm">Agent management will be implemented in phase 04</p>
+      {agents.length > 0 && (
+        <AgentTabBar
+          agents={filteredAgents}
+          selectedId={selectedAgentId}
+          onSelect={setSelectedAgent}
+          onClose={(id) => deleteAgent(id)}
+          onNewAgent={() => setDialogOpen(true)}
+        />
+      )}
+
+      {selectedAgent ? (
+        <AgentDetailPanel
+          agent={selectedAgent}
+          outputs={selectedOutputs}
+          onStop={() => stopAgent(selectedAgent.id)}
+          onRestart={() => restartAgent(selectedAgent.id)}
+          onDelete={() => deleteAgent(selectedAgent.id)}
+          onSendInput={(text) => sendInput(selectedAgent.id, text)}
+        />
+      ) : (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="w-12 h-12 mx-auto mb-4 rounded-full bg-[var(--surface)] flex items-center justify-center">
+              <Bot className="w-6 h-6 text-[var(--text-muted)]" />
+            </div>
+            <p className="text-base font-light text-[var(--foreground)] mb-1">No agents running</p>
+            <p className="text-sm text-[var(--text-secondary)]">
+              Create a new agent to get started
+            </p>
           </div>
         </div>
-      </div>
+      )}
+
+      <CreateAgentDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        onCreate={createAgent}
+      />
     </div>
   );
 }
