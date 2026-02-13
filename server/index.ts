@@ -4,13 +4,17 @@ import { resolve } from 'node:path';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import next from 'next';
 import { createExpressApp } from './express-app.js';
-import { initWebSocketServer } from './websocket/server.js';
-import { initDatabase, closeDatabase } from './db/index.js';
+import { initWebSocketServer, setActiveAgentsProvider } from './websocket/server.js';
+import { initDatabase, closeDatabase, getDb } from './db/index.js';
+import * as schema from './db/schema.js';
+import { eq } from 'drizzle-orm';
 import { generateEncryptionKey } from './utils/crypto.js';
 import { logger } from './utils/logger.js';
 import { SelfAgentService } from './services/self-agent.js';
 import { AgentProcessManager } from './services/agent-process-manager.js';
+import { initAgentRegistry } from './services/agent-registry.js';
 import { registerChatHandlers } from './websocket/chat-handlers.js';
+import { registerAgentHandlers } from './websocket/agent-handlers.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = resolve(process.env.DATA_DIR || './data');
@@ -33,9 +37,30 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 3: Initialize core services
-  logger.info('Server', 'Step 2: Initializing core services...');
-  const agentProcessManager = new AgentProcessManager();
+  // Step 3: Initialize agent registry
+  logger.info('Server', 'Step 2: Initializing agent registry...');
+  initAgentRegistry();
+
+  // Step 4: Initialize core services
+  logger.info('Server', 'Step 3: Initializing core services...');
+
+  // Read max processes from settings
+  let maxProcesses = 10;
+  try {
+    const db = getDb();
+    const row = db.select().from(schema.settings).where(eq(schema.settings.key, 'agent.max_processes')).get();
+    if (row) {
+      maxProcesses = parseInt(row.value, 10) || 10;
+    }
+  } catch { /* use default */ }
+
+  const agentProcessManager = new AgentProcessManager({
+    dataDir: DATA_DIR,
+    maxProcesses,
+  });
+
+  // Recover agents from previous session
+  agentProcessManager.recoverAgents();
 
   let selfAgent: SelfAgentService;
   try {
@@ -48,15 +73,22 @@ async function main() {
     process.exit(1);
   }
 
-  // Register chat WebSocket handlers
+  // Register WebSocket handlers
   registerChatHandlers(selfAgent);
+  registerAgentHandlers(agentProcessManager);
 
-  // Step 4: Create Express application
-  logger.info('Server', 'Step 3: Creating Express application...');
-  const expressApp = createExpressApp(DATA_DIR);
+  // Provide active agents to WebSocket init payload
+  setActiveAgentsProvider(() => agentProcessManager.listAll());
 
-  // Step 5: Initialize Next.js
-  logger.info('Server', 'Step 4: Initializing Next.js...');
+  // Step 5: Create Express application
+  logger.info('Server', 'Step 4: Creating Express application...');
+  const expressApp = createExpressApp({
+    dataDir: DATA_DIR,
+    agentProcessManager,
+  });
+
+  // Step 6: Initialize Next.js
+  logger.info('Server', 'Step 5: Initializing Next.js...');
   const nextApp = next({ dev: isDev });
   const nextHandler = nextApp.getRequestHandler();
   try {
@@ -71,15 +103,15 @@ async function main() {
     return nextHandler(req, res);
   });
 
-  // Step 6: Create HTTP server
-  logger.info('Server', 'Step 5: Creating HTTP server...');
+  // Step 7: Create HTTP server
+  logger.info('Server', 'Step 6: Creating HTTP server...');
   const httpServer = createServer(expressApp);
 
-  // Step 7: Initialize WebSocket server
-  logger.info('Server', 'Step 6: Initializing WebSocket server...');
+  // Step 8: Initialize WebSocket server
+  logger.info('Server', 'Step 7: Initializing WebSocket server...');
   initWebSocketServer(httpServer);
 
-  // Step 8: Start listening
+  // Step 9: Start listening
   httpServer.listen(PORT, () => {
     logger.info('Server', `=== JRAgentMesh Ready ===`);
     logger.info('Server', `  Local:  http://localhost:${PORT}`);
@@ -88,9 +120,10 @@ async function main() {
   });
 
   // Graceful shutdown
-  const shutdown = () => {
+  const shutdown = async () => {
     logger.info('Server', 'Shutting down...');
     selfAgent.destroy();
+    await agentProcessManager.destroy();
     httpServer.close();
     closeDatabase();
     process.exit(0);

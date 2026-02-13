@@ -14,6 +14,7 @@ interface SidebarProps {
 
 function AgentQuickCard({ agent }: { agent: AgentInfo }) {
   const statusColor = {
+    STARTING: 'bg-[var(--warning)]',
     RUNNING: 'bg-[var(--success)]',
     STOPPED: 'bg-[var(--text-muted)]',
     CRASHED: 'bg-[var(--error)]',

@@ -1,7 +1,16 @@
 import express from 'express';
 import { logger } from './utils/logger.js';
+import type { AgentProcessManager } from './services/agent-process-manager.js';
+import type { AgentTypeId } from '../shared/types.js';
+import { getAllAgentTypes } from './services/agent-registry.js';
 
-export function createExpressApp(_dataDir: string) {
+export interface ExpressAppOptions {
+  dataDir: string;
+  agentProcessManager: AgentProcessManager;
+}
+
+export function createExpressApp(options: ExpressAppOptions) {
+  const { agentProcessManager } = options;
   const app = express();
 
   // Middleware
@@ -15,20 +24,83 @@ export function createExpressApp(_dataDir: string) {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
 
-  // Agents
+  // Agent types
+  app.get('/api/agent-types', (_req, res) => {
+    const types = getAllAgentTypes();
+    res.json(types);
+  });
+
+  // GET /api/agents — List all backend agents and their status
   app.get('/api/agents', (_req, res) => {
-    // TODO: Implement in 04-backend-agent-manager
-    res.json([]);
+    try {
+      const agents = agentProcessManager.listAll();
+      res.json(agents);
+    } catch (err: any) {
+      logger.error('REST', 'Failed to list agents', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.post('/api/agents', (_req, res) => {
-    // TODO: Implement in 04-backend-agent-manager
-    res.status(501).json({ error: 'Not implemented' });
+  // POST /api/agents — Create a new backend agent
+  app.post('/api/agents', async (req, res) => {
+    const { typeId, name, workDir, initialPrompt } = req.body;
+
+    if (!typeId) {
+      res.status(400).json({ error: 'typeId is required' });
+      return;
+    }
+
+    try {
+      const info = await agentProcessManager.createProcess(
+        typeId as AgentTypeId,
+        name,
+        workDir,
+        initialPrompt,
+      );
+      res.status(201).json(info);
+    } catch (err: any) {
+      logger.error('REST', 'Failed to create agent', err);
+      res.status(400).json({ error: err.message });
+    }
   });
 
-  app.delete('/api/agents/:id', (_req, res) => {
-    // TODO: Implement in 04-backend-agent-manager
-    res.status(501).json({ error: 'Not implemented' });
+  // DELETE /api/agents/:id — Stop and delete a backend agent
+  app.delete('/api/agents/:id', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      await agentProcessManager.deleteProcess(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      logger.error('REST', `Failed to delete agent ${id}`, err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // POST /api/agents/:id/restart — Restart an agent
+  app.post('/api/agents/:id/restart', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const info = await agentProcessManager.restartProcess(id);
+      res.json(info);
+    } catch (err: any) {
+      logger.error('REST', `Failed to restart agent ${id}`, err);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // POST /api/agents/:id/stop — Stop an agent (convenience)
+  app.post('/api/agents/:id/stop', async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      await agentProcessManager.stopProcess(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      logger.error('REST', `Failed to stop agent ${id}`, err);
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // Settings

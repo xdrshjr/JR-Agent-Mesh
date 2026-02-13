@@ -103,30 +103,21 @@ export function createAgentDispatchTool(
     parameters: AgentDispatchParams,
     async execute(_toolCallId, params) {
       try {
-        // AgentProcessManager is a stub for now — this provides the interface
-        // It will be fully implemented in 04-backend-agent-manager
-        const pm = agentProcessManager as any;
-
         let agent: { id: string; name: string } | null = null;
 
         if (params.agentId) {
-          if (typeof pm.get !== 'function') {
-            return errorResult('AgentProcessManager not fully implemented yet');
-          }
-          agent = pm.get(params.agentId);
-          if (!agent) {
+          const proc = agentProcessManager.getInfo(params.agentId);
+          if (!proc) {
             return errorResult(`Agent with ID "${params.agentId}" not found`);
           }
+          agent = proc;
         } else if (params.agentType) {
-          if (typeof pm.findOrCreate !== 'function') {
-            return errorResult('AgentProcessManager not fully implemented yet');
-          }
-          agent = await pm.findOrCreate(params.agentType, params.workDir);
+          agent = await agentProcessManager.findOrCreate(
+            params.agentType as any,
+            params.workDir,
+          );
         } else {
-          if (typeof pm.autoSelect !== 'function') {
-            return errorResult('AgentProcessManager not fully implemented yet');
-          }
-          agent = await pm.autoSelect(params.task);
+          agent = await agentProcessManager.autoSelect(params.task);
         }
 
         if (!agent) {
@@ -134,9 +125,7 @@ export function createAgentDispatchTool(
         }
 
         // Send the task to the agent
-        if (typeof pm.sendInput === 'function') {
-          pm.sendInput(agent.id, params.task);
-        }
+        agentProcessManager.sendInput(agent.id, params.task);
 
         return textResult(
           `Task dispatched to ${agent.name} (${agent.id}). User can view progress on the Agents page.`,

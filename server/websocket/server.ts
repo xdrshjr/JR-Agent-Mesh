@@ -3,11 +3,18 @@ import type { Server as HTTPServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { handleMessage } from './handler.js';
 import { createMessage } from './protocol.js';
-import type { InitPayload } from '../../shared/types.js';
+import type { InitPayload, AgentInfo } from '../../shared/types.js';
 import { logger } from '../utils/logger.js';
 
 let wss: WebSocketServer;
 const connectedClients = new Set<WebSocket>();
+
+// Callback to get active agents for init payload
+let getActiveAgentsFn: (() => AgentInfo[]) | null = null;
+
+export function setActiveAgentsProvider(fn: () => AgentInfo[]) {
+  getActiveAgentsFn = fn;
+}
 
 export function initWebSocketServer(httpServer: HTTPServer) {
   wss = new WebSocketServer({ noServer: true });
@@ -30,9 +37,10 @@ export function initWebSocketServer(httpServer: HTTPServer) {
     logger.info('WS', `Client connected (total: ${connectedClients.size})`);
 
     // Send init message
+    const activeAgents = getActiveAgentsFn ? getActiveAgentsFn() : [];
     const initPayload: InitPayload = {
       selfAgentStatus: 'ready',
-      activeAgents: [],
+      activeAgents,
       currentConversationId: null,
     };
     ws.send(createMessage('init', initPayload));

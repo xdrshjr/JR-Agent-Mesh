@@ -6,7 +6,7 @@
 
 export type AgentTypeId = 'claude-code' | 'opencode' | 'codex';
 
-export type AgentStatus = 'RUNNING' | 'STOPPED' | 'CRASHED' | 'EXITED' | 'FAILED';
+export type AgentStatus = 'STARTING' | 'RUNNING' | 'STOPPED' | 'CRASHED' | 'EXITED' | 'FAILED';
 
 export interface AgentInfo {
   id: string;

@@ -1,12 +1,17 @@
 import type { AgentTypeId } from '../../shared/types.js';
 import { logger } from '../utils/logger.js';
 
+export type InputMode = 'stdin' | 'newline';
+
 export interface AgentTypeConfig {
   id: AgentTypeId;
   displayName: string;
   command: string;
   args: string[];
-  envVars: Record<string, string>;
+  envMapping: Record<string, string>; // { ENV_VAR_NAME: credential_key }
+  inputMode: InputMode;
+  healthCheck?: string;
+  icon: string;
   description: string;
 }
 
@@ -25,14 +30,18 @@ export function getAllAgentTypes(): AgentTypeConfig[] {
   return Array.from(registry.values());
 }
 
-// Register built-in agent types
 export function initAgentRegistry() {
   registerAgentType({
     id: 'claude-code',
     displayName: 'Claude Code',
     command: 'claude',
     args: ['--dangerously-skip-permissions'],
-    envVars: {},
+    envMapping: {
+      ANTHROPIC_API_KEY: 'anthropic_key',
+    },
+    inputMode: 'stdin',
+    healthCheck: 'claude --version',
+    icon: 'anthropic',
     description: 'Anthropic Claude Code CLI agent',
   });
 
@@ -41,7 +50,12 @@ export function initAgentRegistry() {
     displayName: 'OpenCode',
     command: 'opencode',
     args: [],
-    envVars: {},
+    envMapping: {
+      OPENAI_API_KEY: 'openai_key',
+    },
+    inputMode: 'stdin',
+    healthCheck: 'opencode --version',
+    icon: 'opencode',
     description: 'OpenCode CLI agent',
   });
 
@@ -50,7 +64,12 @@ export function initAgentRegistry() {
     displayName: 'Codex',
     command: 'codex',
     args: [],
-    envVars: {},
+    envMapping: {
+      OPENAI_API_KEY: 'openai_key',
+    },
+    inputMode: 'stdin',
+    healthCheck: 'codex --version',
+    icon: 'codex',
     description: 'OpenAI Codex CLI agent',
   });
 
