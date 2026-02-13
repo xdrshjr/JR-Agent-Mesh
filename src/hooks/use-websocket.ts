@@ -12,6 +12,7 @@ import type {
   ChatToolStartPayload,
   ChatToolEndPayload,
   ChatMessageCompletePayload,
+  ChatFileReadyPayload,
   ChatErrorPayload,
   ChatNewConversationCreatedPayload,
   ChatConversationLoadedPayload,
@@ -126,6 +127,14 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       const data = payload as ChatMessageCompletePayload;
       useChatStore.getState().completeStreaming(data.usage);
       useChatStore.getState().setIsLoading(false);
+    });
+
+    client.on('chat.file_ready', (payload) => {
+      const data = payload as ChatFileReadyPayload;
+      useChatStore.getState().addFileAttachment(data.messageId, {
+        fileId: data.fileId,
+        filename: data.filename,
+      }, data.size, data.downloadUrl);
     });
 
     client.on('chat.error', (payload) => {

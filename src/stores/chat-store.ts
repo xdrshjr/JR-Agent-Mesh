@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Message, Conversation, ToolCallRecord, TokenUsage } from '@/lib/types';
+import type { Message, Conversation, ToolCallRecord, TokenUsage, Attachment } from '@/lib/types';
 
 interface StreamingMessage {
   id: string;
@@ -7,7 +7,15 @@ interface StreamingMessage {
   content: string;
   thinking: string;
   toolCalls: ToolCallRecord[];
+  attachments: Attachment[];
   isStreaming: boolean;
+}
+
+export interface FileReadyInfo {
+  fileId: string;
+  filename: string;
+  size: number;
+  downloadUrl: string;
 }
 
 interface ChatState {
@@ -23,6 +31,9 @@ interface ChatState {
   provider: string;
   model: string;
   dispatchMode: boolean;
+
+  // File ready info (download URLs and sizes for file_transfer tool results)
+  fileReadyMap: Record<string, FileReadyInfo>;
 
   // UI state
   isLoading: boolean;
@@ -42,6 +53,10 @@ interface ChatState {
   updateToolCallEnd: (toolCallId: string, result: string | undefined, success: boolean, duration: number) => void;
   completeStreaming: (usage?: TokenUsage) => void;
 
+  // File attachments from agent
+  addFileAttachment: (messageId: string, attachment: Attachment, size: number, downloadUrl: string) => void;
+  getFileReadyInfo: (fileId: string) => FileReadyInfo | undefined;
+
   // Model
   setProvider: (provider: string) => void;
   setModel: (model: string) => void;
@@ -56,6 +71,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentConversationId: null,
   messages: [],
   streamingMessage: null,
+  fileReadyMap: {},
   provider: 'anthropic',
   model: 'claude-sonnet-4-5-20250929',
   dispatchMode: false,
@@ -75,6 +91,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         content: '',
         thinking: '',
         toolCalls: [],
+        attachments: [],
         isStreaming: true,
       },
     }),
@@ -136,7 +153,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content: streamingMessage.content || null,
       thinking: streamingMessage.thinking || null,
       toolCalls: streamingMessage.toolCalls.length > 0 ? streamingMessage.toolCalls : null,
-      attachments: null,
+      attachments: streamingMessage.attachments.length > 0 ? streamingMessage.attachments : null,
       tokenUsage: usage ?? null,
       createdAt: Date.now(),
     };
@@ -147,10 +164,45 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }));
   },
 
+  addFileAttachment: (messageId, attachment, size, downloadUrl) => {
+    set((s) => {
+      // Store file ready info
+      const newMap = { ...s.fileReadyMap, [attachment.fileId]: { fileId: attachment.fileId, filename: attachment.filename, size, downloadUrl } };
+
+      // Add to streaming message if it matches
+      if (s.streamingMessage && s.streamingMessage.id === messageId) {
+        return {
+          fileReadyMap: newMap,
+          streamingMessage: {
+            ...s.streamingMessage,
+            attachments: [...s.streamingMessage.attachments, attachment],
+          },
+        };
+      }
+
+      // Otherwise add to existing completed message
+      const messages = s.messages.map((msg) => {
+        if (msg.id === messageId) {
+          return {
+            ...msg,
+            attachments: [...(msg.attachments || []), attachment],
+          };
+        }
+        return msg;
+      });
+
+      return { fileReadyMap: newMap, messages };
+    });
+  },
+
+  getFileReadyInfo: (fileId) => {
+    return get().fileReadyMap[fileId];
+  },
+
   setProvider: (provider) => set({ provider }),
   setModel: (model) => set({ model }),
   setDispatchMode: (enabled) => set({ dispatchMode: enabled }),
 
   setIsLoading: (loading) => set({ isLoading: loading }),
-  clearMessages: () => set({ messages: [], streamingMessage: null }),
+  clearMessages: () => set({ messages: [], streamingMessage: null, fileReadyMap: {} }),
 }));

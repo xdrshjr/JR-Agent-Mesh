@@ -1,4 +1,8 @@
 import express from 'express';
+import multer from 'multer';
+import { existsSync, mkdirSync, createReadStream, statSync, renameSync } from 'node:fs';
+import { join, extname, basename } from 'node:path';
+import { v4 as uuidv4 } from 'uuid';
 import { logger } from './utils/logger.js';
 import type { AgentProcessManager } from './services/agent-process-manager.js';
 import type { SelfAgentService } from './services/self-agent.js';
@@ -9,6 +13,7 @@ import {
   MessageRepository,
   SettingsRepository,
   CredentialRepository,
+  FileTransferRepository,
 } from './db/repositories/index.js';
 import { broadcastToAllClients } from './websocket/server.js';
 import { getDb } from './db/index.js';
@@ -33,6 +38,25 @@ export function createExpressApp(options: ExpressAppOptions) {
   const messageRepo = new MessageRepository();
   const settingsRepo = new SettingsRepository();
   const credentialRepo = new CredentialRepository();
+  const fileTransferRepo = new FileTransferRepository();
+
+  // Upload limits
+  const UPLOAD_MAX_FILE_SIZE = 50 * 1024 * 1024;   // 50MB per file
+  const UPLOAD_MAX_TOTAL_SIZE = 200 * 1024 * 1024;  // 200MB total
+  const UPLOAD_MAX_FILE_COUNT = 10;
+
+  // Configure multer for file uploads
+  const uploadDir = join(options.dataDir, 'uploads');
+  const uploadTmpDir = join(options.dataDir, 'uploads', '_tmp');
+  mkdirSync(uploadTmpDir, { recursive: true });
+
+  const upload = multer({
+    dest: uploadTmpDir,
+    limits: {
+      fileSize: UPLOAD_MAX_FILE_SIZE,
+      files: UPLOAD_MAX_FILE_COUNT,
+    },
+  });
 
   // --- REST API Routes ---
 
@@ -328,14 +352,145 @@ export function createExpressApp(options: ExpressAppOptions) {
 
   // --- File upload/download ---
 
-  app.post('/api/upload', (_req, res) => {
-    // TODO: Implement in 08-file-transfer
-    res.status(501).json({ error: 'Not implemented' });
+  app.post('/api/upload', upload.array('files', UPLOAD_MAX_FILE_COUNT), (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        res.status(400).json({ error: 'No files provided' });
+        return;
+      }
+
+      // Check total size
+      const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+      if (totalSize > UPLOAD_MAX_TOTAL_SIZE) {
+        res.status(413).json({ error: `Total upload size exceeds ${UPLOAD_MAX_TOTAL_SIZE / 1024 / 1024}MB limit` });
+        return;
+      }
+
+      const conversationId = (req.body?.conversationId as string) || undefined;
+      const results: Array<{ fileId: string; filename: string; size: number }> = [];
+
+      for (const file of files) {
+        const fileId = uuidv4();
+        const fileDir = join(uploadDir, fileId);
+        mkdirSync(fileDir, { recursive: true });
+
+        const safeName = basename(file.originalname);
+        const destPath = join(fileDir, safeName);
+        renameSync(file.path, destPath);
+
+        // Record in database
+        fileTransferRepo.create({
+          id: fileId,
+          conversationId,
+          filename: safeName,
+          filePath: destPath,
+          fileSize: file.size,
+          direction: 'upload',
+          status: 'completed',
+        });
+
+        results.push({
+          fileId,
+          filename: safeName,
+          size: file.size,
+        });
+
+        logger.info('Upload', `File uploaded: ${safeName} (${file.size} bytes) → ${fileId}`);
+      }
+
+      res.json({ files: results });
+    } catch (err: any) {
+      logger.error('REST', 'File upload failed', err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.get('/api/download/:fileId', (_req, res) => {
-    // TODO: Implement in 08-file-transfer
-    res.status(501).json({ error: 'Not implemented' });
+  // Handle multer errors (file too large, too many files)
+  app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        res.status(413).json({ error: `File exceeds ${UPLOAD_MAX_FILE_SIZE / 1024 / 1024}MB size limit` });
+        return;
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        res.status(413).json({ error: `Maximum ${UPLOAD_MAX_FILE_COUNT} files per upload` });
+        return;
+      }
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    next(err);
+  });
+
+  app.get('/api/download/:fileId', (req, res) => {
+    try {
+      const { fileId } = req.params;
+      const record = fileTransferRepo.getById(fileId);
+
+      if (!record) {
+        res.status(404).json({ error: 'File not found' });
+        return;
+      }
+
+      if (record.status === 'expired') {
+        res.status(410).json({ error: 'File has expired' });
+        return;
+      }
+
+      if (!existsSync(record.filePath)) {
+        res.status(404).json({ error: 'File has been deleted' });
+        return;
+      }
+
+      // Update status to completed and extend expiry to 7 days
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      fileTransferRepo.updateStatus(record.id, 'completed', Date.now() + sevenDays);
+
+      // Determine MIME type
+      const mimeTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        '.xls': 'application/vnd.ms-excel',
+        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        '.csv': 'text/csv',
+        '.json': 'application/json',
+        '.txt': 'text/plain',
+        '.md': 'text/markdown',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.webp': 'image/webp',
+        '.zip': 'application/zip',
+        '.tar': 'application/x-tar',
+        '.gz': 'application/gzip',
+        '.js': 'text/javascript',
+        '.ts': 'text/typescript',
+        '.py': 'text/x-python',
+        '.html': 'text/html',
+        '.css': 'text/css',
+        '.xml': 'application/xml',
+        '.mp3': 'audio/mpeg',
+        '.mp4': 'video/mp4',
+      };
+
+      const ext = extname(record.filename).toLowerCase();
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+      const stat = statSync(record.filePath);
+
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(record.filename)}"`);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', stat.size);
+
+      const stream = createReadStream(record.filePath);
+      stream.pipe(res);
+    } catch (err: any) {
+      logger.error('REST', `File download failed for ${req.params.fileId}`, err);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- Data Export / Import ---

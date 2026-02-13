@@ -1,4 +1,5 @@
-import { unlinkSync, existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { logger } from '../utils/logger.js';
 import { FileTransferRepository } from './repositories/file-transfer-repository.js';
 import { AgentProcessRepository } from './repositories/agent-process-repository.js';
@@ -64,22 +65,29 @@ function cleanExpiredFileTransfers() {
   let deletedRecords = 0;
 
   for (const record of expired) {
-    // Delete physical file
+    // Delete physical file directory (e.g., data/uploads/{fileId}/ or data/downloads/{fileId}/)
     try {
-      if (record.filePath && existsSync(record.filePath)) {
-        unlinkSync(record.filePath);
-        deletedFiles++;
+      if (record.filePath) {
+        const fileDir = dirname(record.filePath);
+        if (existsSync(fileDir)) {
+          rmSync(fileDir, { recursive: true, force: true });
+          deletedFiles++;
+        }
       }
     } catch (err) {
-      logger.warn('Cleanup', `Failed to delete file ${record.filePath}`, err);
+      logger.warn('Cleanup', `Failed to delete file directory for ${record.filePath}`, err);
     }
 
-    // Delete DB record
+    // Pending files → mark as expired; completed files → delete record
     try {
-      repo.delete(record.id);
+      if (record.status === 'pending') {
+        repo.updateStatus(record.id, 'expired');
+      } else {
+        repo.delete(record.id);
+      }
       deletedRecords++;
     } catch (err) {
-      logger.warn('Cleanup', `Failed to delete file transfer record ${record.id}`, err);
+      logger.warn('Cleanup', `Failed to update/delete file transfer record ${record.id}`, err);
     }
   }
 

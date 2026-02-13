@@ -23,15 +23,15 @@ import { broadcastToAllClients } from '../websocket/server.js';
 import { logger } from '../utils/logger.js';
 import type { ServerMessageType } from '../../shared/types.js';
 import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
-import { createFileTransferTool, createAgentDispatchTool, type FileTransferInfo } from './tools/custom-tools.js';
+import { createFileTransferTool, createAgentDispatchTool } from './tools/custom-tools.js';
 import type { AgentProcessManager } from './agent-process-manager.js';
+import type { FileTransferService } from './file-transfer.js';
 import type {
   ChatStreamDeltaPayload,
   ChatThinkingDeltaPayload,
   ChatToolStartPayload,
   ChatToolEndPayload,
   ChatMessageCompletePayload,
-  ChatFileReadyPayload,
   ChatErrorPayload,
   TokenUsage,
   ToolCallRecord,
@@ -59,6 +59,7 @@ const DISPATCH_PROMPT_SUFFIX = `
 export interface SelfAgentServiceOptions {
   dataDir: string;
   agentProcessManager: AgentProcessManager;
+  fileTransferService: FileTransferService;
 }
 
 export class SelfAgentService {
@@ -67,6 +68,7 @@ export class SelfAgentService {
   private currentMessageId: string | null = null;
   private dispatchMode = false;
   private agentProcessManager: AgentProcessManager;
+  private fileTransferService: FileTransferService;
   private credentialRepo: CredentialRepository;
   private dataDir: string;
   private unsubscribe: (() => void) | null = null;
@@ -77,6 +79,7 @@ export class SelfAgentService {
   constructor(options: SelfAgentServiceOptions) {
     this.dataDir = options.dataDir;
     this.agentProcessManager = options.agentProcessManager;
+    this.fileTransferService = options.fileTransferService;
     this.credentialRepo = new CredentialRepository();
 
     // Load settings from DB
@@ -190,7 +193,10 @@ export class SelfAgentService {
       writeTool,
       editTool,
       bashTool,
-      createFileTransferTool(this.dataDir, (info) => this.onFileReady(info)),
+      createFileTransferTool(this.fileTransferService, () => ({
+        conversationId: this.currentConversationId ?? undefined,
+        messageId: this.currentMessageId ?? undefined,
+      })),
     ];
 
     if (includeDispatch) {
@@ -322,21 +328,6 @@ export class SelfAgentService {
     }
   }
 
-  private onFileReady(info: FileTransferInfo): void {
-    const conversationId = this.currentConversationId;
-    const messageId = this.currentMessageId;
-    if (!conversationId || !messageId) return;
-
-    this.broadcast<ChatFileReadyPayload>('chat.file_ready', {
-      conversationId,
-      messageId,
-      fileId: info.fileId,
-      filename: info.filename,
-      size: info.size,
-      downloadUrl: `/api/download/${info.fileId}`,
-    });
-  }
-
   private broadcast<T>(type: ServerMessageType, payload: T): void {
     broadcastToAllClients(type, payload);
   }
@@ -355,10 +346,23 @@ export class SelfAgentService {
       // Build user message with optional attachments
       let messageContent: string = content;
       if (attachments && attachments.length > 0) {
-        const attachmentInfo = attachments
-          .map((a) => `[Attached file: ${a.filename}]`)
-          .join('\n');
-        messageContent = `${content}\n\n${attachmentInfo}`;
+        const attachmentParts: string[] = [];
+        for (const att of attachments) {
+          const fileInfo = this.fileTransferService.getUploadInfo(att.fileId);
+          if (fileInfo) {
+            const sizeStr = fileInfo.fileSize < 1024
+              ? `${fileInfo.fileSize} B`
+              : fileInfo.fileSize < 1024 * 1024
+                ? `${(fileInfo.fileSize / 1024).toFixed(1)} KB`
+                : `${(fileInfo.fileSize / (1024 * 1024)).toFixed(1)} MB`;
+            attachmentParts.push(
+              `[Attached file: ${att.filename} (path: ${fileInfo.filePath}, size: ${sizeStr})]`
+            );
+          } else {
+            attachmentParts.push(`[Attached file: ${att.filename}]`);
+          }
+        }
+        messageContent = `${content}\n\n${attachmentParts.join('\n')}`;
       }
 
       await this.agent.prompt(messageContent);

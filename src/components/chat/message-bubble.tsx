@@ -5,6 +5,7 @@ import { MarkdownRenderer } from './markdown-renderer';
 import { ToolTimeline } from './tool-timeline';
 import { FileAttachment } from './file-attachment';
 import type { Message } from '@/lib/types';
+import { useChatStore } from '@/stores/chat-store';
 import { User, Bot } from 'lucide-react';
 
 interface MessageBubbleProps {
@@ -13,6 +14,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const getFileReadyInfo = useChatStore((s) => s.getFileReadyInfo);
 
   return (
     <div
@@ -75,9 +77,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
-              {message.attachments.map((att) => (
-                <FileAttachment key={att.fileId} attachment={att} />
-              ))}
+              {message.attachments.map((att) => {
+                const info = getFileReadyInfo(att.fileId);
+                return (
+                  <FileAttachment
+                    key={att.fileId}
+                    attachment={att}
+                    downloadUrl={info?.downloadUrl}
+                    size={info?.size}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

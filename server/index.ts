@@ -12,6 +12,7 @@ import { generateEncryptionKey } from './utils/crypto.js';
 import { logger } from './utils/logger.js';
 import { SelfAgentService } from './services/self-agent.js';
 import { AgentProcessManager } from './services/agent-process-manager.js';
+import { FileTransferService } from './services/file-transfer.js';
 import { initAgentRegistry } from './services/agent-registry.js';
 import { registerChatHandlers } from './websocket/chat-handlers.js';
 import { registerAgentHandlers } from './websocket/agent-handlers.js';
@@ -66,11 +67,14 @@ async function main() {
   // Recover agents from previous session
   agentProcessManager.recoverAgents();
 
+  const fileTransferService = new FileTransferService(DATA_DIR);
+
   let selfAgent: SelfAgentService;
   try {
     selfAgent = new SelfAgentService({
       dataDir: DATA_DIR,
       agentProcessManager,
+      fileTransferService,
     });
   } catch (err) {
     logger.error('Server', 'Failed to initialize SelfAgentService', err);

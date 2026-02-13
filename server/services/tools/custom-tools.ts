@@ -1,10 +1,9 @@
 import { Type } from '@sinclair/typebox';
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import type { TextContent } from '@mariozechner/pi-ai';
-import { existsSync, statSync, copyFileSync, mkdirSync } from 'node:fs';
-import { resolve, basename, join } from 'node:path';
-import { v4 as uuidv4 } from 'uuid';
+import { resolve } from 'node:path';
 import type { AgentProcessManager } from '../agent-process-manager.js';
+import type { FileTransferService } from '../file-transfer.js';
 
 // --- Helper ---
 
@@ -24,14 +23,12 @@ function errorResult(error: string): AgentToolResult<undefined> {
 
 // --- File Transfer Tool ---
 
-export interface FileTransferInfo {
-  fileId: string;
-  filename: string;
-  size: number;
-  filePath: string;
+export interface FileTransferContext {
+  conversationId?: string;
+  messageId?: string;
 }
 
-export type FileReadyCallback = (info: FileTransferInfo) => void;
+export type FileTransferContextProvider = () => FileTransferContext;
 
 const FileTransferParams = Type.Object({
   path: Type.String({ description: 'Path to the file on server to send to user' }),
@@ -39,12 +36,9 @@ const FileTransferParams = Type.Object({
 });
 
 export function createFileTransferTool(
-  dataDir: string,
-  onFileReady: FileReadyCallback,
+  fileTransferService: FileTransferService,
+  getContext: FileTransferContextProvider,
 ): AgentTool<typeof FileTransferParams> {
-  const downloadDir = join(dataDir, 'downloads');
-  mkdirSync(downloadDir, { recursive: true });
-
   return {
     name: 'file_transfer',
     label: 'Send File',
@@ -53,32 +47,33 @@ export function createFileTransferTool(
     async execute(_toolCallId, params) {
       try {
         const sourcePath = resolve(params.path);
-        if (!existsSync(sourcePath)) {
-          return errorResult(`File not found: ${sourcePath}`);
-        }
-        const stat = statSync(sourcePath);
-        if (stat.isDirectory()) {
-          return errorResult(`Path is a directory: ${sourcePath}`);
-        }
+        const ctx = getContext();
 
-        const fileId = uuidv4();
-        const filename = params.filename || basename(sourcePath);
-        const destPath = join(downloadDir, fileId);
-        copyFileSync(sourcePath, destPath);
-
-        onFileReady({
-          fileId,
-          filename,
-          size: stat.size,
-          filePath: destPath,
+        const result = fileTransferService.prepareDownload({
+          sourcePath,
+          filename: params.filename,
+          conversationId: ctx.conversationId ?? undefined,
+          messageId: ctx.messageId ?? undefined,
         });
 
-        return textResult(`File "${filename}" (${stat.size} bytes) is ready for user to download.`);
+        if ('error' in result) {
+          return errorResult(result.error);
+        }
+
+        const sizeStr = formatSize(result.size);
+        return textResult(`File "${result.filename}" (${sizeStr}) is ready for user to download.`);
       } catch (err: any) {
         return errorResult(err.message);
       }
     },
   };
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 // --- Agent Dispatch Tool ---
