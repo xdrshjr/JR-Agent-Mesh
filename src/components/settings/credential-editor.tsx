@@ -28,6 +28,7 @@ export function CredentialEditor() {
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const detectModels = useSettingsStore((s) => s.detectModels);
   const isDetectingModels = useSettingsStore((s) => s.isDetectingModels);
+  const customApiMode = useSettingsStore((s) => s.customApiMode);
 
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -42,8 +43,15 @@ export function CredentialEditor() {
   // Build display list: merge predefined types with server data
   const credentialItems = CREDENTIAL_TYPES.map((type) => {
     const serverCred = credentials.find((c) => c.key === type.key);
+    // Dynamic description for custom_key based on API mode
+    const description = type.key === 'custom_key'
+      ? (customApiMode === 'anthropic'
+        ? 'Used for custom Anthropic-compatible API'
+        : 'Used for custom OpenAI-compatible API')
+      : type.description;
     return {
       ...type,
+      description,
       hasValue: serverCred?.hasValue || false,
       maskedValue: serverCred?.maskedValue || null,
       updatedAt: serverCred?.updatedAt || null,

@@ -278,6 +278,7 @@ export function createExpressApp(options: ExpressAppOptions) {
         'self_agent.custom_url',
         'self_agent.custom_model_id',
         'self_agent.provider_api_urls',
+        'self_agent.custom_api_mode',
       ];
       if (keys.some((k) => modelRelatedKeys.includes(k))) {
         if (selfAgentService) {
@@ -399,7 +400,13 @@ export function createExpressApp(options: ExpressAppOptions) {
         } catch { /* ignore parse errors */ }
       }
 
-      const result = await detectProviderModels(provider, apiKey, overrideUrl);
+      // For custom provider, read the API mode setting
+      let apiMode: string | undefined;
+      if (provider === 'custom') {
+        apiMode = settingsRepo.get('self_agent.custom_api_mode') || 'openai';
+      }
+
+      const result = await detectProviderModels(provider, apiKey, overrideUrl, apiMode);
 
       if (result.error) {
         res.status(502).json({ error: result.error, code: 'DETECTION_FAILED', models: result.models });

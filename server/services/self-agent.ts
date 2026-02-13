@@ -117,6 +117,7 @@ export class SelfAgentService {
     systemPrompt: string;
     customUrl: string;
     customModelId: string;
+    customApiMode: string;
   } {
     const db = getDb();
     const rows = db.select().from(schema.settings).all();
@@ -128,6 +129,7 @@ export class SelfAgentService {
       systemPrompt: map.get('self_agent.system_prompt') || '',
       customUrl: map.get('self_agent.custom_url') || '',
       customModelId: map.get('self_agent.custom_model_id') || '',
+      customApiMode: map.get('self_agent.custom_api_mode') || 'openai',
     };
   }
 
@@ -242,16 +244,18 @@ export class SelfAgentService {
       customUrl = map.get('self_agent.custom_url') || '';
     }
     const customModelId = map.get('self_agent.custom_model_id') || 'custom';
+    const customApiMode = map.get('self_agent.custom_api_mode') || 'openai';
 
     if (!customUrl) {
       logger.warn('SelfAgent', 'Custom provider selected but no API URL configured');
     }
 
-    // Most custom LLM endpoints are OpenAI-compatible
+    const api = customApiMode === 'anthropic' ? 'anthropic-messages' : 'openai-completions';
+
     return {
       id: customModelId,
       name: customModelId,
-      api: 'openai-completions',
+      api,
       provider: 'custom',
       baseUrl: customUrl,
       reasoning: false,

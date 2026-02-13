@@ -44,11 +44,13 @@ export interface DetectionResult {
 
 /**
  * Detect available models for a given provider by querying its API.
+ * @param apiMode — For the 'custom' provider, selects detection method: 'anthropic' or 'openai' (default).
  */
 export async function detectProviderModels(
   provider: string,
   apiKey: string,
   overrideUrl?: string,
+  apiMode?: string,
 ): Promise<DetectionResult> {
   const baseUrl = (overrideUrl?.trim() || PROVIDER_DEFAULT_URLS[provider] || '').replace(/\/+$/, '');
 
@@ -69,8 +71,11 @@ export async function detectProviderModels(
       case 'openai':
       case 'xai':
       case 'groq':
-      case 'custom':
         return await detectOpenAICompat(baseUrl, apiKey);
+      case 'custom':
+        return apiMode === 'anthropic'
+          ? await detectAnthropic(baseUrl, apiKey)
+          : await detectOpenAICompat(baseUrl, apiKey);
       default:
         return { models: [], error: `Unsupported provider: ${provider}` };
     }

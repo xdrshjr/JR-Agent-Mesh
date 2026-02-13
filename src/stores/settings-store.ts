@@ -74,6 +74,7 @@ interface SettingsState {
   defaultModel: string;
   providerApiUrls: Record<string, string>;
   customModelId: string;
+  customApiMode: 'openai' | 'anthropic';
   systemPrompt: string;
 
   // Backend Agent
@@ -105,6 +106,7 @@ interface SettingsState {
   setDefaultModel: (model: string) => void;
   setProviderApiUrl: (provider: string, url: string) => void;
   setCustomModelId: (id: string) => void;
+  setCustomApiMode: (mode: 'openai' | 'anthropic') => void;
   setSystemPrompt: (prompt: string) => void;
 
   setAgentConfig: (typeId: string, config: { cliPath: string; defaultArgs: string }) => void;
@@ -129,6 +131,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   defaultModel: 'claude-sonnet-4-5-20250929',
   providerApiUrls: {},
   customModelId: '',
+  customApiMode: 'openai',
   systemPrompt: '',
 
   agentConfigs: {
@@ -160,6 +163,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       providerApiUrls: { ...s.providerApiUrls, [provider]: url },
     })),
   setCustomModelId: (id) => set({ customModelId: id }),
+  setCustomApiMode: (mode) => set({ customApiMode: mode }),
   setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
 
   setAgentConfig: (typeId, config) =>
@@ -205,6 +209,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         defaultModel: selfAgent.model ?? 'claude-sonnet-4-5-20250929',
         providerApiUrls,
         customModelId: selfAgent.custom_model_id ?? '',
+        customApiMode: (selfAgent.custom_api_mode === 'anthropic' ? 'anthropic' : 'openai') as 'openai' | 'anthropic',
         systemPrompt: selfAgent.system_prompt ?? '',
 
         soundEnabled: notification.sound !== 'false',
@@ -244,6 +249,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         'self_agent.provider_api_urls': JSON.stringify(state.providerApiUrls),
         'self_agent.custom_url': state.providerApiUrls['custom'] ?? '',
         'self_agent.custom_model_id': state.customModelId,
+        'self_agent.custom_api_mode': state.customApiMode,
         'self_agent.system_prompt': state.systemPrompt,
         'notification.sound': String(state.soundEnabled),
         'notification.browser': String(state.browserNotificationsEnabled),

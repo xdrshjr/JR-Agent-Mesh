@@ -13,7 +13,7 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select';
-import { PROVIDERS, MODELS } from '@/lib/model-options';
+import { PROVIDERS, MODELS, CUSTOM_API_MODES } from '@/lib/model-options';
 
 const DEFAULT_SYSTEM_PROMPT = '';
 
@@ -118,9 +118,27 @@ export function SelfAgentSettings() {
         </div>
       </section>
 
-      {/* Custom Model ID — only visible when provider is "custom" */}
+      {/* Custom provider options — only visible when provider is "custom" */}
       {isCustomProvider && (
         <section>
+          {/* API Mode Selector */}
+          <div className="space-y-1.5 mb-4">
+            <label className="text-xs text-[var(--text-secondary)]">API Mode</label>
+            <Select value={store.customApiMode} onValueChange={(val) => store.setCustomApiMode(val as 'openai' | 'anthropic')}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CUSTOM_API_MODES.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-[var(--text-muted)]">
+              {CUSTOM_API_MODES.find(m => m.id === store.customApiMode)?.description}
+            </p>
+          </div>
+          {/* Custom Model ID */}
           <div className="space-y-1.5">
             <label className="text-xs text-[var(--text-secondary)]">Custom Model ID</label>
             <Input
