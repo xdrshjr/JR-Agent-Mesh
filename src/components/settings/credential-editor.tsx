@@ -115,8 +115,9 @@ export function CredentialEditor() {
       const hasUrlChange = editUrl.trim() !== (providerApiUrls[provider] || '');
       if (hasUrlChange) {
         setProviderApiUrl(provider, editUrl.trim());
-        await saveSettings();
       }
+      // Always save settings so the server has latest state (e.g. customApiMode)
+      await saveSettings();
       if (editValue.trim()) {
         await saveCredential(editKey, editValue.trim());
         setEditValue('');

@@ -163,7 +163,15 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       providerApiUrls: { ...s.providerApiUrls, [provider]: url },
     })),
   setCustomModelId: (id) => set({ customModelId: id }),
-  setCustomApiMode: (mode) => set({ customApiMode: mode }),
+  setCustomApiMode: (mode) => set((s) => {
+    // Clear stale detected models — they were fetched with the previous API mode
+    const { custom: _, ...restDetected } = s.detectedModels;
+    return {
+      customApiMode: mode,
+      detectedModels: restDetected,
+      modelDetectionErrors: { ...s.modelDetectionErrors, custom: null },
+    };
+  }),
   setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
 
   setAgentConfig: (typeId, config) =>
@@ -209,7 +217,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         defaultModel: selfAgent.model ?? 'claude-sonnet-4-5-20250929',
         providerApiUrls,
         customModelId: selfAgent.custom_model_id ?? '',
-        customApiMode: (selfAgent.custom_api_mode === 'anthropic' ? 'anthropic' : 'openai') as 'openai' | 'anthropic',
+        customApiMode: selfAgent.custom_api_mode === 'anthropic' ? 'anthropic' : 'openai',
         systemPrompt: selfAgent.system_prompt ?? '',
 
         soundEnabled: notification.sound !== 'false',
