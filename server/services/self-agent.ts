@@ -1,8 +1,770 @@
-import { logger } from '../utils/logger.js';
+import { Agent } from '@mariozechner/pi-agent-core';
+import type { AgentTool, AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
+import {
+  streamSimple,
+  getModel,
+  getModels,
+  type Model,
+  type Message,
+  type UserMessage,
+  type AssistantMessage as PiAssistantMessage,
+  type ToolResultMessage,
+  type TextContent,
+  type ThinkingContent,
+  type ToolCall,
+} from '@mariozechner/pi-ai';
+import { v4 as uuidv4 } from 'uuid';
+import { eq, asc } from 'drizzle-orm';
 
-// Stub — will be implemented in 03-self-agent
-export class SelfAgent {
-  constructor() {
-    logger.info('SelfAgent', 'Initialized (stub)');
+import { getDb } from '../db/index.js';
+import * as schema from '../db/schema.js';
+import { createMessage } from '../websocket/protocol.js';
+import { getConnectedClients } from '../websocket/server.js';
+import { logger } from '../utils/logger.js';
+import type { ServerMessageType } from '../../shared/types.js';
+import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
+import { createFileTransferTool, createAgentDispatchTool, type FileTransferInfo } from './tools/custom-tools.js';
+import type { AgentProcessManager } from './agent-process-manager.js';
+import type {
+  ChatStreamDeltaPayload,
+  ChatThinkingDeltaPayload,
+  ChatToolStartPayload,
+  ChatToolEndPayload,
+  ChatMessageCompletePayload,
+  ChatFileReadyPayload,
+  ChatErrorPayload,
+  TokenUsage,
+  ToolCallRecord,
+} from '../../shared/types.js';
+
+// --- Default System Prompt ---
+
+const DEFAULT_SYSTEM_PROMPT = `你是 JRAgentMesh 的内置 AI 助手，具备完整的通用能力。
+
+你可以：
+- 与用户进行自然语言对话
+- 读取、写入、编辑服务器上的文件
+- 执行 Shell 命令
+- 帮助用户完成编程、文档编写、文件管理等任务
+- 向用户发送文件（通过 file_transfer 工具）`;
+
+const DISPATCH_PROMPT_SUFFIX = `
+
+你还可以将任务分发给后台 Agent：
+- 使用 agent_dispatch 工具将任务发送给指定的后台 Agent
+- 根据任务性质选择合适的 Agent，或让用户指定`;
+
+// --- SelfAgentService ---
+
+export interface SelfAgentServiceOptions {
+  dataDir: string;
+  agentProcessManager: AgentProcessManager;
+}
+
+export class SelfAgentService {
+  private agent: Agent;
+  private currentConversationId: string | null = null;
+  private currentMessageId: string | null = null;
+  private dispatchMode = false;
+  private agentProcessManager: AgentProcessManager;
+  private dataDir: string;
+  private unsubscribe: (() => void) | null = null;
+
+  // Tracking tool calls for the current message
+  private toolCallStartTimes = new Map<string, number>();
+
+  constructor(options: SelfAgentServiceOptions) {
+    this.dataDir = options.dataDir;
+    this.agentProcessManager = options.agentProcessManager;
+
+    // Load settings from DB
+    const { provider, modelId, systemPrompt } = this.loadSettings();
+
+    // Get model from pi-ai
+    const model = this.resolveModel(provider, modelId);
+
+    // Build tools
+    const tools = this.buildTools(false);
+
+    // Create Agent instance
+    this.agent = new Agent({
+      initialState: {
+        systemPrompt: systemPrompt || DEFAULT_SYSTEM_PROMPT,
+        model,
+        tools,
+        thinkingLevel: 'medium',
+      },
+      streamFn: streamSimple,
+      getApiKey: (prov) => this.getApiKeyForProvider(prov),
+    });
+
+    // Subscribe to agent events
+    this.unsubscribe = this.agent.subscribe((event) => this.handleAgentEvent(event));
+
+    logger.info('SelfAgent', `Initialized with ${provider}/${modelId}`);
+  }
+
+  // --- Settings ---
+
+  private loadSettings(): {
+    provider: string;
+    modelId: string;
+    systemPrompt: string;
+  } {
+    const db = getDb();
+    const rows = db.select().from(schema.settings).all();
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+
+    return {
+      provider: map.get('self_agent.provider') || 'anthropic',
+      modelId: map.get('self_agent.model') || 'claude-sonnet-4-5-20250929',
+      systemPrompt: map.get('self_agent.system_prompt') || '',
+    };
+  }
+
+  private getApiKeyForProvider(provider: string): string | undefined {
+    // Try environment variables first
+    const envKeyMap: Record<string, string> = {
+      anthropic: 'ANTHROPIC_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      google: 'GOOGLE_API_KEY',
+      xai: 'XAI_API_KEY',
+      groq: 'GROQ_API_KEY',
+      cerebras: 'CEREBRAS_API_KEY',
+      mistral: 'MISTRAL_API_KEY',
+    };
+
+    const envKey = envKeyMap[provider];
+    if (envKey && process.env[envKey]) {
+      return process.env[envKey];
+    }
+
+    // Try credentials table
+    try {
+      const db = getDb();
+      const cred = db.select().from(schema.credentials)
+        .where(eq(schema.credentials.provider, provider))
+        .get();
+      if (cred) {
+        // Credential is encrypted — for now use env vars; full decryption via CredentialStore
+        // will be integrated in 07-settings-and-credentials
+        return undefined;
+      }
+    } catch {
+      // DB not available or query failed
+    }
+
+    return undefined;
+  }
+
+  private resolveModel(provider: string, modelId: string): Model<any> {
+    try {
+      // Try exact match from known providers
+      const models = getModels(provider as any);
+      const found = models.find((m) => m.id === modelId);
+      if (found) return found;
+    } catch {
+      // Provider not recognized as known — fallback
+    }
+
+    // Fallback: try anthropic claude-sonnet-4-5
+    try {
+      return getModel('anthropic', 'claude-sonnet-4-5-20250929' as any);
+    } catch {
+      // Last resort: return first available anthropic model
+      const models = getModels('anthropic');
+      return models[0];
+    }
+  }
+
+  private buildTools(includeDispatch: boolean): AgentTool<any>[] {
+    const tools: AgentTool<any>[] = [
+      readTool,
+      writeTool,
+      editTool,
+      bashTool,
+      createFileTransferTool(this.dataDir, (info) => this.onFileReady(info)),
+    ];
+
+    if (includeDispatch) {
+      tools.push(createAgentDispatchTool(this.agentProcessManager));
+    }
+
+    return tools;
+  }
+
+  // --- System Prompt ---
+
+  private buildSystemPrompt(customPrompt?: string): string {
+    let prompt = customPrompt || DEFAULT_SYSTEM_PROMPT;
+    if (this.dispatchMode) {
+      prompt += DISPATCH_PROMPT_SUFFIX;
+    }
+    return prompt;
+  }
+
+  // --- Agent Event Handling → WebSocket Forwarding ---
+
+  private handleAgentEvent(event: AgentEvent): void {
+    const conversationId = this.currentConversationId;
+    if (!conversationId) return;
+
+    switch (event.type) {
+      case 'agent_start':
+        // Generate a new message ID for the assistant response
+        this.currentMessageId = `msg-${uuidv4()}`;
+        break;
+
+      case 'message_update': {
+        const messageId = this.currentMessageId;
+        if (!messageId) break;
+
+        const aEvent = event.assistantMessageEvent;
+
+        if (aEvent.type === 'text_delta') {
+          this.broadcast<ChatStreamDeltaPayload>('chat.stream_delta', {
+            conversationId,
+            messageId,
+            delta: aEvent.delta,
+          });
+        } else if (aEvent.type === 'thinking_delta') {
+          this.broadcast<ChatThinkingDeltaPayload>('chat.thinking_delta', {
+            conversationId,
+            messageId,
+            delta: aEvent.delta,
+          });
+        }
+        break;
+      }
+
+      case 'tool_execution_start': {
+        const messageId = this.currentMessageId;
+        if (!messageId) break;
+
+        this.toolCallStartTimes.set(event.toolCallId, Date.now());
+
+        this.broadcast<ChatToolStartPayload>('chat.tool_start', {
+          conversationId,
+          messageId,
+          toolCallId: event.toolCallId,
+          tool: event.toolName,
+          args: event.args,
+        });
+        break;
+      }
+
+      case 'tool_execution_end': {
+        const messageId = this.currentMessageId;
+        if (!messageId) break;
+
+        const startTime = this.toolCallStartTimes.get(event.toolCallId) || Date.now();
+        const duration = Date.now() - startTime;
+        this.toolCallStartTimes.delete(event.toolCallId);
+
+        // Extract result text
+        let resultText: string | undefined;
+        if (event.result?.content) {
+          resultText = event.result.content
+            .filter((c: any) => c.type === 'text')
+            .map((c: any) => c.text)
+            .join('\n');
+        }
+
+        this.broadcast<ChatToolEndPayload>('chat.tool_end', {
+          conversationId,
+          messageId,
+          toolCallId: event.toolCallId,
+          tool: event.toolName,
+          success: !event.isError,
+          result: resultText,
+          duration,
+        });
+        break;
+      }
+
+      case 'agent_end': {
+        const messageId = this.currentMessageId;
+        if (!messageId) break;
+
+        // Extract usage from last assistant message
+        const lastAssistant = event.messages
+          .filter((m): m is PiAssistantMessage => (m as any).role === 'assistant')
+          .pop();
+
+        const usage: TokenUsage | undefined = lastAssistant?.usage
+          ? {
+              inputTokens: lastAssistant.usage.input,
+              outputTokens: lastAssistant.usage.output,
+              cost: lastAssistant.usage.cost?.total,
+            }
+          : undefined;
+
+        this.broadcast<ChatMessageCompletePayload>('chat.message_complete', {
+          conversationId,
+          messageId,
+          usage,
+        });
+
+        // Persist messages to DB
+        this.persistMessages(conversationId);
+
+        this.currentMessageId = null;
+        this.toolCallStartTimes.clear();
+        break;
+      }
+    }
+  }
+
+  private onFileReady(info: FileTransferInfo): void {
+    const conversationId = this.currentConversationId;
+    const messageId = this.currentMessageId;
+    if (!conversationId || !messageId) return;
+
+    this.broadcast<ChatFileReadyPayload>('chat.file_ready', {
+      conversationId,
+      messageId,
+      fileId: info.fileId,
+      filename: info.filename,
+      size: info.size,
+      downloadUrl: `/api/download/${info.fileId}`,
+    });
+  }
+
+  private broadcast<T>(type: ServerMessageType, payload: T): void {
+    const clients = getConnectedClients();
+    const message = createMessage(type, payload);
+    for (const client of clients) {
+      if (client.readyState === 1 /* OPEN */) {
+        client.send(message);
+      }
+    }
+  }
+
+  // --- User Interaction ---
+
+  async handleUserMessage(conversationId: string, content: string, attachments?: any[]): Promise<void> {
+    // Ensure we have a conversation
+    if (!this.currentConversationId || this.currentConversationId !== conversationId) {
+      await this.createOrLoadConversation(conversationId);
+    }
+
+    this.currentConversationId = conversationId;
+
+    try {
+      // Build user message with optional attachments
+      let messageContent: string = content;
+      if (attachments && attachments.length > 0) {
+        const attachmentInfo = attachments
+          .map((a) => `[Attached file: ${a.filename}]`)
+          .join('\n');
+        messageContent = `${content}\n\n${attachmentInfo}`;
+      }
+
+      await this.agent.prompt(messageContent);
+    } catch (err: any) {
+      logger.error('SelfAgent', 'Error handling user message', err);
+      this.broadcast<ChatErrorPayload>('chat.error', {
+        conversationId,
+        error: err.message || 'Unknown error occurred',
+        code: 'llm_error',
+      });
+    }
+  }
+
+  handleAbort(conversationId: string): void {
+    if (this.currentConversationId !== conversationId) return;
+    this.agent.abort();
+    logger.info('SelfAgent', `Aborted conversation ${conversationId}`);
+  }
+
+  handleSteer(conversationId: string, content: string): void {
+    if (this.currentConversationId !== conversationId) return;
+
+    const steerMessage: UserMessage = {
+      role: 'user',
+      content,
+      timestamp: Date.now(),
+    };
+    this.agent.steer(steerMessage);
+    logger.info('SelfAgent', `Steer message queued for ${conversationId}`);
+  }
+
+  // --- Model Switching ---
+
+  switchModel(provider: string, modelId: string): void {
+    const model = this.resolveModel(provider, modelId);
+    this.agent.setModel(model);
+
+    // Persist to settings
+    try {
+      const db = getDb();
+      const now = Date.now();
+      db.update(schema.settings)
+        .set({ value: provider, updatedAt: now })
+        .where(eq(schema.settings.key, 'self_agent.provider'))
+        .run();
+      db.update(schema.settings)
+        .set({ value: modelId, updatedAt: now })
+        .where(eq(schema.settings.key, 'self_agent.model'))
+        .run();
+    } catch (err) {
+      logger.error('SelfAgent', 'Failed to persist model settings', err);
+    }
+
+    logger.info('SelfAgent', `Switched model to ${provider}/${modelId}`);
+  }
+
+  // --- Dispatch Mode ---
+
+  toggleDispatch(enabled: boolean): void {
+    this.dispatchMode = enabled;
+
+    // Update tools
+    const tools = this.buildTools(enabled);
+    this.agent.setTools(tools);
+
+    // Update system prompt
+    const { systemPrompt } = this.loadSettings();
+    this.agent.setSystemPrompt(this.buildSystemPrompt(systemPrompt));
+
+    // Persist
+    try {
+      const db = getDb();
+      db.update(schema.settings)
+        .set({ value: String(enabled), updatedAt: Date.now() })
+        .where(eq(schema.settings.key, 'dispatch.enabled'))
+        .run();
+    } catch (err) {
+      logger.error('SelfAgent', 'Failed to persist dispatch setting', err);
+    }
+
+    logger.info('SelfAgent', `Dispatch mode: ${enabled}`);
+  }
+
+  // --- Conversation Management ---
+
+  async createConversation(): Promise<string> {
+    const id = `conv-${uuidv4()}`;
+    const now = Date.now();
+
+    // Reset agent state
+    this.agent.clearMessages();
+    this.agent.clearAllQueues();
+    this.currentConversationId = id;
+    this.currentMessageId = null;
+
+    // Persist to DB
+    const db = getDb();
+    db.insert(schema.conversations).values({
+      id,
+      title: null,
+      modelProvider: this.agent.state.model.provider,
+      modelId: this.agent.state.model.id,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
+    logger.info('SelfAgent', `Created conversation ${id}`);
+    return id;
+  }
+
+  async loadConversation(conversationId: string): Promise<void> {
+    const db = getDb();
+
+    // Get conversation
+    const conv = db.select().from(schema.conversations)
+      .where(eq(schema.conversations.id, conversationId))
+      .get();
+
+    if (!conv) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+
+    // Get messages ordered by creation time
+    const dbMessages = db.select().from(schema.messages)
+      .where(eq(schema.messages.conversationId, conversationId))
+      .orderBy(asc(schema.messages.createdAt))
+      .all();
+
+    // Reset agent and load messages
+    this.agent.clearMessages();
+    this.agent.clearAllQueues();
+    this.currentConversationId = conversationId;
+
+    // Convert DB messages to AgentMessage format
+    const agentMessages: Message[] = [];
+    for (const msg of dbMessages) {
+      if (msg.role === 'user') {
+        agentMessages.push({
+          role: 'user',
+          content: msg.content || '',
+          timestamp: msg.createdAt,
+        } as UserMessage);
+      } else if (msg.role === 'assistant') {
+        // Parse tool calls once
+        let parsedToolCalls: ToolCallRecord[] | null = null;
+        if (msg.toolCalls) {
+          try {
+            parsedToolCalls = JSON.parse(msg.toolCalls);
+          } catch { /* ignore parse errors */ }
+        }
+
+        // Reconstruct assistant message content
+        const content: (TextContent | ThinkingContent | ToolCall)[] = [];
+
+        if (msg.thinking) {
+          content.push({ type: 'thinking', thinking: msg.thinking } as ThinkingContent);
+        }
+        if (msg.content) {
+          content.push({ type: 'text', text: msg.content } as TextContent);
+        }
+
+        if (parsedToolCalls) {
+          for (const tc of parsedToolCalls) {
+            content.push({
+              type: 'toolCall',
+              id: tc.id,
+              name: tc.tool,
+              arguments: tc.args,
+            } as ToolCall);
+          }
+        }
+
+        const stubUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+        agentMessages.push({
+          role: 'assistant',
+          content,
+          api: (conv.modelProvider === 'openai' ? 'openai-completions' : 'anthropic-messages') as any,
+          provider: conv.modelProvider || 'anthropic',
+          model: conv.modelId || '',
+          usage: stubUsage,
+          stopReason: 'stop',
+          timestamp: msg.createdAt,
+        } as PiAssistantMessage);
+
+        // Add tool results for tool calls
+        if (parsedToolCalls) {
+          for (const tc of parsedToolCalls) {
+            agentMessages.push({
+              role: 'toolResult',
+              toolCallId: tc.id,
+              toolName: tc.tool,
+              content: [{ type: 'text', text: tc.result || '' } as TextContent],
+              isError: !tc.success,
+              timestamp: msg.createdAt,
+            } as ToolResultMessage);
+          }
+        }
+      }
+    }
+
+    this.agent.replaceMessages(agentMessages);
+    logger.info('SelfAgent', `Loaded conversation ${conversationId} with ${agentMessages.length} messages`);
+  }
+
+  async deleteConversation(conversationId: string): Promise<void> {
+    const db = getDb();
+
+    // Delete messages first (cascade should handle this, but be explicit)
+    db.delete(schema.messages)
+      .where(eq(schema.messages.conversationId, conversationId))
+      .run();
+
+    // Delete conversation
+    db.delete(schema.conversations)
+      .where(eq(schema.conversations.id, conversationId))
+      .run();
+
+    // If this is the current conversation, create a new one
+    if (this.currentConversationId === conversationId) {
+      await this.createConversation();
+    }
+
+    logger.info('SelfAgent', `Deleted conversation ${conversationId}`);
+  }
+
+  private async createOrLoadConversation(conversationId: string): Promise<void> {
+    const db = getDb();
+    const existing = db.select().from(schema.conversations)
+      .where(eq(schema.conversations.id, conversationId))
+      .get();
+
+    if (existing) {
+      await this.loadConversation(conversationId);
+    } else {
+      // Create new conversation with the provided ID
+      const now = Date.now();
+      this.agent.clearMessages();
+      this.agent.clearAllQueues();
+      this.currentConversationId = conversationId;
+      this.currentMessageId = null;
+
+      db.insert(schema.conversations).values({
+        id: conversationId,
+        title: null,
+        modelProvider: this.agent.state.model.provider,
+        modelId: this.agent.state.model.id,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+    }
+  }
+
+  // --- Persistence ---
+
+  private persistMessages(conversationId: string): void {
+    try {
+      const db = getDb();
+      const agentMessages = this.agent.state.messages;
+
+      // Get existing message IDs for this conversation
+      const existingIds = new Set(
+        db.select({ id: schema.messages.id })
+          .from(schema.messages)
+          .where(eq(schema.messages.conversationId, conversationId))
+          .all()
+          .map((r) => r.id),
+      );
+
+      // Build a list of messages to persist
+      let msgIndex = 0;
+      for (const msg of agentMessages) {
+        const role = (msg as any).role;
+        if (role !== 'user' && role !== 'assistant') continue;
+
+        const msgId = `${conversationId}-${msgIndex++}`;
+        if (existingIds.has(msgId)) continue;
+
+        if (role === 'user') {
+          const userMsg = msg as UserMessage;
+          const content = typeof userMsg.content === 'string'
+            ? userMsg.content
+            : userMsg.content
+                .filter((c: any) => c.type === 'text')
+                .map((c: any) => c.text)
+                .join('\n');
+
+          db.insert(schema.messages).values({
+            id: msgId,
+            conversationId,
+            role: 'user',
+            content,
+            thinking: null,
+            toolCalls: null,
+            attachments: null,
+            tokenUsage: null,
+            createdAt: userMsg.timestamp || Date.now(),
+          }).onConflictDoNothing().run();
+        } else if (role === 'assistant') {
+          const assistantMsg = msg as PiAssistantMessage;
+
+          // Extract text content
+          const textParts = assistantMsg.content
+            .filter((c): c is TextContent => c.type === 'text')
+            .map((c) => c.text);
+          const text = textParts.join('') || null;
+
+          // Extract thinking content
+          const thinkingParts = assistantMsg.content
+            .filter((c): c is ThinkingContent => c.type === 'thinking')
+            .map((c) => c.thinking);
+          const thinking = thinkingParts.join('') || null;
+
+          // Extract tool calls
+          const toolCalls = assistantMsg.content
+            .filter((c): c is ToolCall => c.type === 'toolCall')
+            .map((tc) => ({
+              id: tc.id,
+              tool: tc.name,
+              args: tc.arguments,
+              success: true,
+              duration: 0,
+              startedAt: assistantMsg.timestamp,
+            }));
+
+          const usage: TokenUsage | null = assistantMsg.usage
+            ? {
+                inputTokens: assistantMsg.usage.input,
+                outputTokens: assistantMsg.usage.output,
+                cost: assistantMsg.usage.cost?.total,
+              }
+            : null;
+
+          db.insert(schema.messages).values({
+            id: msgId,
+            conversationId,
+            role: 'assistant',
+            content: text,
+            thinking,
+            toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
+            attachments: null,
+            tokenUsage: usage ? JSON.stringify(usage) : null,
+            createdAt: assistantMsg.timestamp || Date.now(),
+          }).onConflictDoNothing().run();
+        }
+      }
+
+      // Update conversation timestamp
+      db.update(schema.conversations)
+        .set({ updatedAt: Date.now() })
+        .where(eq(schema.conversations.id, conversationId))
+        .run();
+
+      // Auto-generate title from first user message if needed
+      this.maybeUpdateTitle(conversationId);
+    } catch (err) {
+      logger.error('SelfAgent', 'Failed to persist messages', err);
+    }
+  }
+
+  private maybeUpdateTitle(conversationId: string): void {
+    const db = getDb();
+    const conv = db.select().from(schema.conversations)
+      .where(eq(schema.conversations.id, conversationId))
+      .get();
+
+    if (conv && !conv.title) {
+      // Use the first user message as title
+      const firstUserMsg = this.agent.state.messages.find(
+        (m) => (m as any).role === 'user',
+      );
+      if (firstUserMsg) {
+        const content = (firstUserMsg as UserMessage).content;
+        const text = typeof content === 'string' ? content : '';
+        const title = text.length > 50 ? text.slice(0, 47) + '...' : text;
+
+        if (title) {
+          db.update(schema.conversations)
+            .set({ title })
+            .where(eq(schema.conversations.id, conversationId))
+            .run();
+        }
+      }
+    }
+  }
+
+  // --- Public getters ---
+
+  getCurrentConversationId(): string | null {
+    return this.currentConversationId;
+  }
+
+  isDispatchMode(): boolean {
+    return this.dispatchMode;
+  }
+
+  getAgentState() {
+    return this.agent.state;
+  }
+
+  // --- Cleanup ---
+
+  destroy(): void {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    this.agent.abort();
+    logger.info('SelfAgent', 'Destroyed');
   }
 }

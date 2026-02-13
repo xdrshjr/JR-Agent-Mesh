@@ -8,6 +8,9 @@ import { initWebSocketServer } from './websocket/server.js';
 import { initDatabase, closeDatabase } from './db/index.js';
 import { generateEncryptionKey } from './utils/crypto.js';
 import { logger } from './utils/logger.js';
+import { SelfAgentService } from './services/self-agent.js';
+import { AgentProcessManager } from './services/agent-process-manager.js';
+import { registerChatHandlers } from './websocket/chat-handlers.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = resolve(process.env.DATA_DIR || './data');
@@ -32,8 +35,21 @@ async function main() {
 
   // Step 3: Initialize core services
   logger.info('Server', 'Step 2: Initializing core services...');
-  // TODO: CredentialStore, AgentRegistry, AgentProcessManager, SelfAgent, SessionManager
-  // These will be implemented in subsequent specs (03, 04, 07)
+  const agentProcessManager = new AgentProcessManager();
+
+  let selfAgent: SelfAgentService;
+  try {
+    selfAgent = new SelfAgentService({
+      dataDir: DATA_DIR,
+      agentProcessManager,
+    });
+  } catch (err) {
+    logger.error('Server', 'Failed to initialize SelfAgentService', err);
+    process.exit(1);
+  }
+
+  // Register chat WebSocket handlers
+  registerChatHandlers(selfAgent);
 
   // Step 4: Create Express application
   logger.info('Server', 'Step 3: Creating Express application...');
@@ -74,6 +90,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = () => {
     logger.info('Server', 'Shutting down...');
+    selfAgent.destroy();
     httpServer.close();
     closeDatabase();
     process.exit(0);

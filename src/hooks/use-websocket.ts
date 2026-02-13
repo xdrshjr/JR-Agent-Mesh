@@ -13,6 +13,8 @@ import type {
   ChatToolEndPayload,
   ChatMessageCompletePayload,
   ChatErrorPayload,
+  ChatNewConversationCreatedPayload,
+  ChatConversationLoadedPayload,
   AgentCreatedPayload,
   AgentOutputPayload,
   AgentStatusPayload,
@@ -103,6 +105,19 @@ export function useWebSocket() {
       const data = payload as ChatErrorPayload;
       useChatStore.getState().setIsLoading(false);
       showToast({ level: 'error', title: 'Chat Error', message: data.error });
+    });
+
+    // New conversation created
+    client.on('chat.new_conversation_created', (payload) => {
+      const data = payload as ChatNewConversationCreatedPayload;
+      useChatStore.getState().setCurrentConversation(data.conversationId);
+    });
+
+    // Conversation loaded with history
+    client.on('chat.conversation_loaded', (payload) => {
+      const data = payload as ChatConversationLoadedPayload;
+      useChatStore.getState().setCurrentConversation(data.conversationId);
+      useChatStore.getState().setMessages(data.messages);
     });
 
     // Agent events

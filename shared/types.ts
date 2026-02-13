@@ -261,6 +261,15 @@ export type ClientMessageType =
   | 'agent.get_output'
   | 'file.uploaded';
 
+export interface ChatNewConversationCreatedPayload {
+  conversationId: string;
+}
+
+export interface ChatConversationLoadedPayload {
+  conversationId: string;
+  messages: Message[];
+}
+
 export type ServerMessageType =
   | 'pong'
   | 'init'
@@ -271,6 +280,8 @@ export type ServerMessageType =
   | 'chat.message_complete'
   | 'chat.file_ready'
   | 'chat.error'
+  | 'chat.new_conversation_created'
+  | 'chat.conversation_loaded'
   | 'agent.created'
   | 'agent.output'
   | 'agent.status'
