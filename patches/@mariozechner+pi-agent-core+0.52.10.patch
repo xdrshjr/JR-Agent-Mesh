@@ -1,0 +1,32 @@
+diff --git a/node_modules/@mariozechner/pi-agent-core/dist/agent-loop.js b/node_modules/@mariozechner/pi-agent-core/dist/agent-loop.js
+index b26d457..153222d 100644
+--- a/node_modules/@mariozechner/pi-agent-core/dist/agent-loop.js
++++ b/node_modules/@mariozechner/pi-agent-core/dist/agent-loop.js
+@@ -22,7 +22,12 @@ export function agentLoop(prompts, context, config, signal, streamFn) {
+             stream.push({ type: "message_end", message: prompt });
+         }
+         await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+-    })();
++    })().catch(() => {
++        if (!stream.done) {
++            stream.push({ type: "agent_end", messages: [] });
++            stream.end([]);
++        }
++    });
+     return stream;
+ }
+ /**
+@@ -47,7 +52,12 @@ export function agentLoopContinue(context, config, signal, streamFn) {
+         stream.push({ type: "agent_start" });
+         stream.push({ type: "turn_start" });
+         await runLoop(currentContext, newMessages, config, signal, stream, streamFn);
+-    })();
++    })().catch(() => {
++        if (!stream.done) {
++            stream.push({ type: "agent_end", messages: [] });
++            stream.end([]);
++        }
++    });
+     return stream;
+ }
+ function createAgentStream() {

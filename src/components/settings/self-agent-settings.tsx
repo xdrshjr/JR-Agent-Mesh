@@ -1,10 +1,11 @@
 'use client';
 
-import { useSettingsStore } from '@/stores/settings-store';
+import { useEffect } from 'react';
+import { useSettingsStore, CREDENTIAL_TYPES } from '@/stores/settings-store';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
-import { RotateCcw } from 'lucide-react';
+import { RotateCcw, RefreshCw, Loader2 } from 'lucide-react';
 import {
   Select,
   SelectTrigger,
@@ -19,6 +20,31 @@ const DEFAULT_SYSTEM_PROMPT = '';
 export function SelfAgentSettings() {
   const store = useSettingsStore();
   const isCustomProvider = store.defaultProvider === 'custom';
+  const provider = store.defaultProvider;
+
+  const detected = store.detectedModels[provider];
+  const modelList = detected?.length ? detected : MODELS[provider] || [];
+  const isDetecting = store.isDetectingModels[provider] || false;
+  const detectionError = store.modelDetectionErrors[provider] || null;
+
+  // Ensure credentials are loaded for auto-detect
+  useEffect(() => {
+    store.fetchCredentials();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-detect models on mount when credentials exist for the current provider
+  useEffect(() => {
+    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider);
+    if (!credType) return;
+    const credInfo = store.credentials.find((c) => c.key === credType.key);
+    if (credInfo?.hasValue && !store.detectedModels[provider]) {
+      store.detectModels(provider);
+    }
+  }, [provider, store.credentials]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleDetectModels = () => {
+    store.detectModels(provider);
+  };
 
   return (
     <div className="space-y-6">
@@ -32,7 +58,9 @@ export function SelfAgentSettings() {
               value={store.defaultProvider}
               onValueChange={(val) => {
                 store.setDefaultProvider(val);
-                const firstModel = MODELS[val]?.[0]?.id || '';
+                const detectedForProvider = store.detectedModels[val];
+                const list = detectedForProvider?.length ? detectedForProvider : MODELS[val] || [];
+                const firstModel = list[0]?.id || '';
                 if (firstModel) store.setDefaultModel(firstModel);
               }}
             >
@@ -49,47 +77,57 @@ export function SelfAgentSettings() {
             </Select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs text-[var(--text-secondary)]">Model</label>
+            <div className="flex items-center justify-between">
+              <label className="text-xs text-[var(--text-secondary)]">Model</label>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={handleDetectModels}
+                disabled={isDetecting}
+                title="Detect available models from API"
+              >
+                {isDetecting ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-3 h-3" />
+                )}
+              </Button>
+            </div>
             <Select value={store.defaultModel} onValueChange={store.setDefaultModel}>
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(MODELS[store.defaultProvider] || []).map((m) => (
+                {modelList.map((m) => (
                   <SelectItem key={m.id} value={m.id}>
                     {m.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {detectionError && (
+              <p className="text-xs text-[var(--error)]">{detectionError}</p>
+            )}
+            {detected && detected.length > 0 && !detectionError && (
+              <p className="text-xs text-[var(--success)]">
+                {detected.length} model{detected.length !== 1 ? 's' : ''} detected
+              </p>
+            )}
           </div>
         </div>
       </section>
 
-      {/* Custom LLM — only visible when provider is "custom" */}
+      {/* Custom Model ID — only visible when provider is "custom" */}
       {isCustomProvider && (
         <section>
-          <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">Custom LLM</h4>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <label className="text-xs text-[var(--text-secondary)]">API URL</label>
-              <Input
-                value={store.customApiUrl}
-                onChange={(e) => store.setCustomApiUrl(e.target.value)}
-                placeholder="https://api.example.com/v1"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs text-[var(--text-secondary)]">Model ID</label>
-              <Input
-                value={store.customModelId}
-                onChange={(e) => store.setCustomModelId(e.target.value)}
-                placeholder="custom-model-name"
-              />
-            </div>
-            <p className="text-xs text-[var(--text-muted)]">
-              API Key for custom provider can be set in the Credentials section below.
-            </p>
+          <div className="space-y-1.5">
+            <label className="text-xs text-[var(--text-secondary)]">Custom Model ID</label>
+            <Input
+              value={store.customModelId}
+              onChange={(e) => store.setCustomModelId(e.target.value)}
+              placeholder="custom-model-name"
+            />
           </div>
         </section>
       )}

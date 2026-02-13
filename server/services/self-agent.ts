@@ -115,6 +115,8 @@ export class SelfAgentService {
     provider: string;
     modelId: string;
     systemPrompt: string;
+    customUrl: string;
+    customModelId: string;
   } {
     const db = getDb();
     const rows = db.select().from(schema.settings).all();
@@ -124,6 +126,8 @@ export class SelfAgentService {
       provider: map.get('self_agent.provider') || 'anthropic',
       modelId: map.get('self_agent.model') || 'claude-sonnet-4-5-20250929',
       systemPrompt: map.get('self_agent.system_prompt') || '',
+      customUrl: map.get('self_agent.custom_url') || '',
+      customModelId: map.get('self_agent.custom_model_id') || '',
     };
   }
 
@@ -167,12 +171,43 @@ export class SelfAgentService {
     return undefined;
   }
 
+  private getProviderApiUrl(provider: string): string | undefined {
+    try {
+      const db = getDb();
+      const row = db.select().from(schema.settings)
+        .where(eq(schema.settings.key, 'self_agent.provider_api_urls'))
+        .get();
+      if (row?.value) {
+        const urls = JSON.parse(row.value);
+        const url = urls[provider];
+        if (url && typeof url === 'string' && url.trim()) {
+          return url.trim();
+        }
+      }
+    } catch {
+      // Ignore parse/DB errors
+    }
+    return undefined;
+  }
+
   private resolveModel(provider: string, modelId: string): Model<any> {
+    // Handle custom provider — construct Model object from DB settings
+    if (provider === 'custom') {
+      return this.buildCustomModel();
+    }
+
     try {
       // Try exact match from known providers
       const models = getModels(provider as any);
       const found = models.find((m) => m.id === modelId);
-      if (found) return found;
+      if (found) {
+        // Apply per-provider API URL override if configured
+        const overrideUrl = this.getProviderApiUrl(provider);
+        if (overrideUrl) {
+          return { ...found, baseUrl: overrideUrl };
+        }
+        return found;
+      }
     } catch {
       // Provider not recognized as known — fallback
     }
@@ -185,6 +220,46 @@ export class SelfAgentService {
       const models = getModels('anthropic');
       return models[0];
     }
+  }
+
+  private buildCustomModel(): Model<any> {
+    const db = getDb();
+    const rows = db.select().from(schema.settings).all();
+    const map = new Map(rows.map((r) => [r.key, r.value]));
+
+    // Read from per-provider URLs first, then fall back to legacy custom_url
+    let customUrl = '';
+    const providerUrlsRaw = map.get('self_agent.provider_api_urls');
+    if (providerUrlsRaw) {
+      try {
+        const urls = JSON.parse(providerUrlsRaw);
+        if (urls['custom'] && typeof urls['custom'] === 'string') {
+          customUrl = urls['custom'];
+        }
+      } catch { /* ignore */ }
+    }
+    if (!customUrl) {
+      customUrl = map.get('self_agent.custom_url') || '';
+    }
+    const customModelId = map.get('self_agent.custom_model_id') || 'custom';
+
+    if (!customUrl) {
+      logger.warn('SelfAgent', 'Custom provider selected but no API URL configured');
+    }
+
+    // Most custom LLM endpoints are OpenAI-compatible
+    return {
+      id: customModelId,
+      name: customModelId,
+      api: 'openai-completions',
+      provider: 'custom',
+      baseUrl: customUrl,
+      reasoning: false,
+      input: ['text', 'image'] as ('text' | 'image')[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096,
+    };
   }
 
   private buildTools(includeDispatch: boolean): AgentTool<any>[] {
@@ -343,6 +418,11 @@ export class SelfAgentService {
     this.currentConversationId = conversationId;
 
     try {
+      // Pre-flight validation: check model configuration before calling agent.prompt()
+      // This is needed because pi-agent-core's agentLoop wraps runLoop in an IIFE
+      // without .catch(), so errors during streaming cause the promise to hang forever.
+      this.validateModelConfig();
+
       // Build user message with optional attachments
       let messageContent: string = content;
       if (attachments && attachments.length > 0) {
@@ -365,14 +445,83 @@ export class SelfAgentService {
         messageContent = `${content}\n\n${attachmentParts.join('\n')}`;
       }
 
-      await this.agent.prompt(messageContent);
+      await this.promptWithWatchdog(messageContent);
     } catch (err: any) {
       logger.error('SelfAgent', 'Error handling user message', err);
+
+      // Recover from a potentially stuck agent
+      try {
+        this.agent.abort();
+        await this.agent.waitForIdle();
+      } catch {
+        // Ignore recovery errors
+      }
+
       this.broadcast<ChatErrorPayload>('chat.error', {
         conversationId,
         error: err.message || 'Unknown error occurred',
         code: 'llm_error',
       });
+    }
+  }
+
+  /**
+   * Wrap agent.prompt() with an idle watchdog that aborts if no agent events
+   * are received within the timeout. This prevents permanent hangs when the
+   * LLM call fails silently (e.g. network error, invalid URL).
+   */
+  private async promptWithWatchdog(content: string, idleTimeoutMs = 60_000): Promise<void> {
+    let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+    let rejectPrompt: ((err: Error) => void) | null = null;
+
+    const resetWatchdog = () => {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        logger.error('SelfAgent', `Watchdog: no agent events for ${idleTimeoutMs / 1000}s, aborting`);
+        this.agent.abort();
+        rejectPrompt?.(new Error(
+          `Agent response timed out (no activity for ${idleTimeoutMs / 1000}s). Check your model configuration and API URL.`
+        ));
+      }, idleTimeoutMs);
+      if (watchdogTimer.unref) watchdogTimer.unref();
+    };
+
+    const unsubWatchdog = this.agent.subscribe(() => resetWatchdog());
+    const watchdogPromise = new Promise<never>((_, reject) => { rejectPrompt = reject; });
+
+    resetWatchdog();
+    try {
+      await Promise.race([this.agent.prompt(content), watchdogPromise]);
+    } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      unsubWatchdog();
+    }
+  }
+
+  /**
+   * Validate that the current model has the required configuration (API key, base URL)
+   * before sending a prompt. Throws with a clear error message if misconfigured.
+   */
+  private validateModelConfig(): void {
+    const model = this.agent.state.model;
+    if (!model) {
+      throw new Error('No model configured. Please select a model in Settings.');
+    }
+
+    // Check API key availability
+    const apiKey = this.getApiKeyForProvider(model.provider);
+    if (!apiKey) {
+      const providerName = model.provider === 'custom' ? 'Custom LLM' : model.provider;
+      throw new Error(
+        `No API key configured for ${providerName}. Please set it in Settings → Credentials.`
+      );
+    }
+
+    // For custom provider, also check that base URL is configured
+    if (model.provider === 'custom' && !model.baseUrl) {
+      throw new Error(
+        'Custom LLM selected but no API URL configured. Please set it in Settings → Custom LLM → API URL.'
+      );
     }
   }
 

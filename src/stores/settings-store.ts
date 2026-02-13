@@ -72,7 +72,7 @@ interface SettingsState {
   // Self Agent
   defaultProvider: string;
   defaultModel: string;
-  customApiUrl: string;
+  providerApiUrls: Record<string, string>;
   customModelId: string;
   systemPrompt: string;
 
@@ -90,6 +90,11 @@ interface SettingsState {
   // Credentials (fetched from server)
   credentials: CredentialInfo[];
 
+  // Model detection
+  detectedModels: Record<string, { id: string; name: string }[]>;
+  isDetectingModels: Record<string, boolean>;
+  modelDetectionErrors: Record<string, string | null>;
+
   // Loading states
   isLoading: boolean;
   isSaving: boolean;
@@ -98,7 +103,7 @@ interface SettingsState {
   // Actions — local state setters
   setDefaultProvider: (provider: string) => void;
   setDefaultModel: (model: string) => void;
-  setCustomApiUrl: (url: string) => void;
+  setProviderApiUrl: (provider: string, url: string) => void;
   setCustomModelId: (id: string) => void;
   setSystemPrompt: (prompt: string) => void;
 
@@ -116,12 +121,13 @@ interface SettingsState {
   fetchCredentials: () => Promise<void>;
   saveCredential: (key: string, value: string) => Promise<void>;
   deleteCredential: (key: string) => Promise<void>;
+  detectModels: (provider: string) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsState>()((set, get) => ({
   defaultProvider: 'anthropic',
   defaultModel: 'claude-sonnet-4-5-20250929',
-  customApiUrl: '',
+  providerApiUrls: {},
   customModelId: '',
   systemPrompt: '',
 
@@ -139,13 +145,20 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   credentials: [],
 
+  detectedModels: {},
+  isDetectingModels: {},
+  modelDetectionErrors: {},
+
   isLoading: false,
   isSaving: false,
   isLoaded: false,
 
   setDefaultProvider: (provider) => set({ defaultProvider: provider }),
   setDefaultModel: (model) => set({ defaultModel: model }),
-  setCustomApiUrl: (url) => set({ customApiUrl: url }),
+  setProviderApiUrl: (provider, url) =>
+    set((s) => ({
+      providerApiUrls: { ...s.providerApiUrls, [provider]: url },
+    })),
   setCustomModelId: (id) => set({ customModelId: id }),
   setSystemPrompt: (prompt) => set({ systemPrompt: prompt }),
 
@@ -175,10 +188,22 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const agent = data.agent || {};
       const general = data.general || {};
 
+      // Parse per-provider API URLs
+      let providerApiUrls: Record<string, string> = {};
+      if (selfAgent.provider_api_urls) {
+        try {
+          providerApiUrls = JSON.parse(selfAgent.provider_api_urls);
+        } catch { /* ignore parse errors */ }
+      }
+      // Backward compat: migrate old custom_url into providerApiUrls
+      if (selfAgent.custom_url && !providerApiUrls['custom']) {
+        providerApiUrls['custom'] = selfAgent.custom_url;
+      }
+
       set({
         defaultProvider: selfAgent.provider ?? 'anthropic',
         defaultModel: selfAgent.model ?? 'claude-sonnet-4-5-20250929',
-        customApiUrl: selfAgent.custom_url ?? '',
+        providerApiUrls,
         customModelId: selfAgent.custom_model_id ?? '',
         systemPrompt: selfAgent.system_prompt ?? '',
 
@@ -216,7 +241,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const payload: Record<string, string> = {
         'self_agent.provider': state.defaultProvider,
         'self_agent.model': state.defaultModel,
-        'self_agent.custom_url': state.customApiUrl,
+        'self_agent.provider_api_urls': JSON.stringify(state.providerApiUrls),
+        'self_agent.custom_url': state.providerApiUrls['custom'] ?? '',
         'self_agent.custom_model_id': state.customModelId,
         'self_agent.system_prompt': state.systemPrompt,
         'notification.sound': String(state.soundEnabled),
@@ -284,6 +310,50 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     } catch (err) {
       console.error('Failed to delete credential:', err);
       throw err;
+    }
+  },
+
+  detectModels: async (provider: string) => {
+    set((s) => ({
+      isDetectingModels: { ...s.isDetectingModels, [provider]: true },
+      modelDetectionErrors: { ...s.modelDetectionErrors, [provider]: null },
+    }));
+    try {
+      const res = await fetch(`/api/providers/${provider}/models`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+
+      if (!res.ok && (!data.models || data.models.length === 0)) {
+        set((s) => ({
+          modelDetectionErrors: {
+            ...s.modelDetectionErrors,
+            [provider]: data.error || 'Failed to detect models',
+          },
+        }));
+        return;
+      }
+
+      set((s) => ({
+        detectedModels: { ...s.detectedModels, [provider]: data.models },
+        modelDetectionErrors: {
+          ...s.modelDetectionErrors,
+          [provider]: data.error || null,
+        },
+      }));
+    } catch (err) {
+      console.error('Failed to detect models:', err);
+      set((s) => ({
+        modelDetectionErrors: {
+          ...s.modelDetectionErrors,
+          [provider]: err instanceof Error ? err.message : 'Network error',
+        },
+      }));
+    } finally {
+      set((s) => ({
+        isDetectingModels: { ...s.isDetectingModels, [provider]: false },
+      }));
     }
   },
 }));

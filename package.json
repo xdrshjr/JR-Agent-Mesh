@@ -9,7 +9,8 @@
     "start": "node dist/server/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.52.10",
@@ -56,6 +57,7 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.5.0",
     "drizzle-kit": "^0.30.0",
+    "patch-package": "^8.0.1",
     "postcss": "^8.4.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.0",

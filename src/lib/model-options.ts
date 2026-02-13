@@ -7,6 +7,15 @@ export const PROVIDERS = [
   { id: 'custom', name: 'Custom LLM' },
 ] as const;
 
+export const PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  anthropic: 'https://api.anthropic.com',
+  openai: 'https://api.openai.com/v1',
+  google: 'https://generativelanguage.googleapis.com',
+  xai: 'https://api.x.ai/v1',
+  groq: 'https://api.groq.com/openai/v1',
+  custom: '',
+};
+
 export const MODELS: Record<string, { id: string; name: string }[]> = {
   anthropic: [
     { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5' },

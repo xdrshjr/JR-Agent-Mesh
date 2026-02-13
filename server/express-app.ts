@@ -18,6 +18,7 @@ import {
 import { broadcastToAllClients } from './websocket/server.js';
 import { getDb } from './db/index.js';
 import * as schema from './db/schema.js';
+import { detectProviderModels } from './services/model-detection.js';
 
 export interface ExpressAppOptions {
   dataDir: string;
@@ -271,7 +272,14 @@ export function createExpressApp(options: ExpressAppOptions) {
   function onSettingsChanged(keys: string[]): void {
     try {
       // Model / provider — do a single switchModel with final values from DB
-      if (keys.includes('self_agent.provider') || keys.includes('self_agent.model')) {
+      const modelRelatedKeys = [
+        'self_agent.provider',
+        'self_agent.model',
+        'self_agent.custom_url',
+        'self_agent.custom_model_id',
+        'self_agent.provider_api_urls',
+      ];
+      if (keys.some((k) => modelRelatedKeys.includes(k))) {
         if (selfAgentService) {
           const provider = settingsRepo.get('self_agent.provider') || 'anthropic';
           const model = settingsRepo.get('self_agent.model') || 'claude-sonnet-4-5-20250929';
@@ -346,6 +354,61 @@ export function createExpressApp(options: ExpressAppOptions) {
       res.json({ success: true });
     } catch (err: any) {
       logger.error('REST', `Failed to delete credential ${req.params.key}`, err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- Model Detection ---
+
+  app.post('/api/providers/:provider/models', async (req, res) => {
+    try {
+      const { provider } = req.params;
+
+      // Map provider to credential key
+      const credKeyMap: Record<string, string> = {
+        anthropic: 'anthropic_key',
+        openai: 'openai_key',
+        google: 'google_key',
+        xai: 'xai_key',
+        groq: 'groq_key',
+        custom: 'custom_key',
+      };
+
+      const credKey = credKeyMap[provider];
+      if (!credKey) {
+        res.status(400).json({ error: `Unknown provider: ${provider}` });
+        return;
+      }
+
+      // Look up API key from credential store
+      const apiKey = credentialRepo.get(credKey);
+      if (!apiKey) {
+        res.status(400).json({ error: 'No API key configured for this provider', code: 'NO_KEY' });
+        return;
+      }
+
+      // Look up override URL from settings
+      let overrideUrl: string | undefined;
+      const urlsJson = settingsRepo.get('self_agent.provider_api_urls');
+      if (urlsJson) {
+        try {
+          const urls = JSON.parse(urlsJson);
+          if (urls[provider]) {
+            overrideUrl = urls[provider];
+          }
+        } catch { /* ignore parse errors */ }
+      }
+
+      const result = await detectProviderModels(provider, apiKey, overrideUrl);
+
+      if (result.error) {
+        res.status(502).json({ error: result.error, code: 'DETECTION_FAILED', models: result.models });
+        return;
+      }
+
+      res.json({ models: result.models });
+    } catch (err: any) {
+      logger.error('REST', `Failed to detect models for ${req.params.provider}`, err);
       res.status(500).json({ error: err.message });
     }
   });

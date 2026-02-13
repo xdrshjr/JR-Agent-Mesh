@@ -24,6 +24,10 @@ const DB_PATH = resolve(DATA_DIR, 'jragentmesh.db');
 const ENV_PATH = resolve('.env');
 const isDev = process.env.NODE_ENV !== 'production';
 
+process.on('unhandledRejection', (reason) => {
+  logger.error('Server', 'Unhandled promise rejection', reason);
+});
+
 async function main() {
   logger.info('Server', '=== JRAgentMesh Starting ===');
 
