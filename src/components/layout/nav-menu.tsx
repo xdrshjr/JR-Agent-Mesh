@@ -15,7 +15,7 @@ export function NavMenu() {
   const pathname = usePathname();
 
   return (
-    <nav className="space-y-1">
+    <nav className="flex flex-col items-center gap-1">
       {navItems.map((item) => {
         const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
         const Icon = item.icon;
@@ -23,15 +23,18 @@ export function NavMenu() {
           <Link
             key={item.href}
             href={item.href}
+            title={item.label}
             className={cn(
-              'flex items-center gap-3 px-3 py-2 rounded-[var(--radius)] text-sm transition-colors duration-150',
+              'relative group flex items-center justify-center w-10 h-10 rounded-[var(--radius)] transition-colors duration-150',
               isActive
-                ? 'bg-[var(--accent)] text-[var(--accent-foreground)] font-medium'
+                ? 'bg-[var(--accent)] text-[var(--accent-foreground)]'
                 : 'text-[var(--text-secondary)] hover:bg-white hover:text-[var(--foreground)]',
             )}
           >
-            <Icon className="w-4 h-4" />
-            {item.label}
+            <Icon className="w-5 h-5" />
+            <span className="absolute left-full ml-2 px-2 py-1 rounded-[var(--radius)] bg-[var(--foreground)] text-[var(--background)] text-xs whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
+              {item.label}
+            </span>
           </Link>
         );
       })}

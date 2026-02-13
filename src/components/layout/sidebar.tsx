@@ -25,10 +25,14 @@ function AgentQuickCard({ agent }: { agent: AgentInfo }) {
   return (
     <Link
       href="/agents"
-      className="flex items-center gap-2 px-3 py-1.5 rounded-[var(--radius)] text-xs hover:bg-white transition-colors duration-150"
+      title={agent.name}
+      className="relative group flex items-center justify-center w-8 h-8 rounded-[var(--radius)] hover:bg-white transition-colors duration-150"
     >
-      <span className={cn('w-1.5 h-1.5 rounded-full shrink-0', statusColor)} />
-      <span className="truncate text-[var(--text-secondary)]">{agent.name}</span>
+      <Bot className="w-4 h-4 text-[var(--text-secondary)]" />
+      <span className={cn('absolute top-0.5 right-0.5 w-2 h-2 rounded-full', statusColor)} />
+      <span className="absolute left-full ml-2 px-2 py-1 rounded-[var(--radius)] bg-[var(--foreground)] text-[var(--background)] text-xs whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
+        {agent.name}
+      </span>
     </Link>
   );
 }
@@ -37,27 +41,17 @@ export function Sidebar({ connected, activeAgents }: SidebarProps) {
   const runningAgents = activeAgents.filter((a) => a.status === 'RUNNING');
 
   return (
-    <aside className="w-60 border-r border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0">
+    <aside className="w-14 border-r border-[var(--border)] bg-[var(--surface)] flex flex-col shrink-0 items-center">
       {/* Navigation */}
-      <div className="p-3">
+      <div className="pt-3 pb-2">
         <NavMenu />
       </div>
 
       {/* Active Agents */}
-      <div className="flex-1 overflow-y-auto px-3">
-        {runningAgents.length > 0 && (
-          <div className="mt-2">
-            <div className="flex items-center gap-2 px-3 mb-1">
-              <Bot className="w-3 h-3 text-[var(--text-muted)]" />
-              <span className="text-[11px] font-medium text-[var(--text-muted)] uppercase tracking-wider">
-                Active Agents
-              </span>
-            </div>
-            {runningAgents.map((agent) => (
-              <AgentQuickCard key={agent.id} agent={agent} />
-            ))}
-          </div>
-        )}
+      <div className="flex-1 min-h-0 flex flex-col items-center gap-1 py-2">
+        {runningAgents.map((agent) => (
+          <AgentQuickCard key={agent.id} agent={agent} />
+        ))}
       </div>
 
       {/* Connection Status */}
