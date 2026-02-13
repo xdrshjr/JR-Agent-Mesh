@@ -139,6 +139,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
     client.on('chat.error', (payload) => {
       const data = payload as ChatErrorPayload;
+      useChatStore.getState().completeStreaming();
       useChatStore.getState().setIsLoading(false);
       showToast({ level: 'error', title: 'Chat Error', message: data.error });
     });

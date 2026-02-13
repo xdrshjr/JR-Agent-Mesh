@@ -393,6 +393,16 @@ export class SelfAgentService {
           usage,
         });
 
+        // Detect error recovery: empty messages indicates the agent loop
+        // caught an error and closed the stream without producing a response
+        if (!lastAssistant) {
+          this.broadcast<ChatErrorPayload>('chat.error', {
+            conversationId,
+            error: 'Failed to get a response from the model. Check your API configuration and try again.',
+            code: 'llm_error',
+          });
+        }
+
         // Persist messages to DB
         this.persistMessages(conversationId);
 
