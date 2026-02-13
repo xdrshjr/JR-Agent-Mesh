@@ -15,6 +15,7 @@ import { AgentProcessManager } from './services/agent-process-manager.js';
 import { initAgentRegistry } from './services/agent-registry.js';
 import { registerChatHandlers } from './websocket/chat-handlers.js';
 import { registerAgentHandlers } from './websocket/agent-handlers.js';
+import { startCleanupJob, stopCleanupJob } from './db/cleanup.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = resolve(process.env.DATA_DIR || './data');
@@ -40,6 +41,9 @@ async function main() {
   // Step 3: Initialize agent registry
   logger.info('Server', 'Step 2: Initializing agent registry...');
   initAgentRegistry();
+
+  // Start data cleanup job (hourly)
+  startCleanupJob();
 
   // Step 4: Initialize core services
   logger.info('Server', 'Step 3: Initializing core services...');
@@ -122,6 +126,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     logger.info('Server', 'Shutting down...');
+    stopCleanupJob();
     stopHeartbeat();
     selfAgent.destroy();
     await agentProcessManager.destroy();

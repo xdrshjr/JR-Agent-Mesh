@@ -129,6 +129,9 @@ function createTables(sqlite: Database.Database) {
 }
 
 function seedDefaults(sqlite: Database.Database) {
+  const now = Date.now();
+
+  // Seed default settings
   const defaults: Record<string, string> = {
     'self_agent.provider': 'anthropic',
     'self_agent.model': 'claude-sonnet-4-5-20250929',
@@ -142,12 +145,29 @@ function seedDefaults(sqlite: Database.Database) {
     'dispatch.enabled': 'false',
   };
 
-  const stmt = sqlite.prepare(
+  const settingsStmt = sqlite.prepare(
     'INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)'
   );
-  const now = Date.now();
   for (const [key, value] of Object.entries(defaults)) {
-    stmt.run(key, value, now);
+    settingsStmt.run(key, value, now);
+  }
+
+  // Seed predefined credential types (empty values — user fills in later)
+  const credentialTypes: Array<{ key: string; displayName: string; provider: string }> = [
+    { key: 'anthropic_key', displayName: 'Anthropic API Key', provider: 'anthropic' },
+    { key: 'openai_key', displayName: 'OpenAI API Key', provider: 'openai' },
+    { key: 'google_key', displayName: 'Google AI API Key', provider: 'google' },
+    { key: 'xai_key', displayName: 'xAI API Key', provider: 'xai' },
+    { key: 'groq_key', displayName: 'Groq API Key', provider: 'groq' },
+    { key: 'mistral_key', displayName: 'Mistral API Key', provider: 'mistral' },
+  ];
+
+  const credStmt = sqlite.prepare(
+    'INSERT OR IGNORE INTO credentials (key, display_name, encrypted_value, iv, auth_tag, provider, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  );
+  for (const cred of credentialTypes) {
+    // Insert with empty encrypted_value — placeholder until user sets a real key
+    credStmt.run(cred.key, cred.displayName, '', '', '', cred.provider, now);
   }
 }
 
@@ -156,6 +176,13 @@ export function getDb() {
     throw new Error('Database not initialized. Call initDatabase() first.');
   }
   return db;
+}
+
+export function getSqlite(): Database.Database {
+  if (!sqlite) {
+    throw new Error('Database not initialized. Call initDatabase() first.');
+  }
+  return sqlite;
 }
 
 export function closeDatabase() {
