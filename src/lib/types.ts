@@ -37,5 +37,10 @@ export type {
   AgentGetOutputPayload,
   ChatFileReadyPayload,
   ChatNewConversationCreatedPayload,
+  ChatConversationUpdatedPayload,
+  ChatRenameConversationPayload,
+  ChatDeleteConversationPayload,
+  ChatConversationDeletedPayload,
+  ChatAllConversationsDeletedPayload,
   ChatConversationLoadedPayload,
 } from '../../shared/types.js';

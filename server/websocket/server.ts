@@ -3,7 +3,8 @@ import type { Server as HTTPServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import { handleMessage } from './handler.js';
 import { createMessage, createMessageWithFragmentation } from './protocol.js';
-import type { InitPayload, AgentInfo, ServerMessageType } from '../../shared/types.js';
+import type { InitPayload, AgentInfo, Conversation, ServerMessageType } from '../../shared/types.js';
+import { ConversationRepository } from '../db/repositories/index.js';
 import { logger } from '../utils/logger.js';
 
 let wss: WebSocketServer;
@@ -48,10 +49,30 @@ export function initWebSocketServer(httpServer: HTTPServer) {
 
     // Send init message
     const activeAgents = getActiveAgentsFn ? getActiveAgentsFn() : [];
+
+    // Query non-archived conversations for the sidebar
+    let conversations: Conversation[] = [];
+    try {
+      const convRepo = new ConversationRepository();
+      const rows = convRepo.list({ archived: false });
+      conversations = rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        modelProvider: r.modelProvider,
+        modelId: r.modelId,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        isArchived: !!r.isArchived,
+      }));
+    } catch (err) {
+      logger.error('WS', 'Failed to load conversations for init', err);
+    }
+
     const initPayload: InitPayload = {
       selfAgentStatus: 'ready',
       activeAgents,
       currentConversationId: null,
+      conversations,
     };
     ws.send(createMessage('init', initPayload));
 

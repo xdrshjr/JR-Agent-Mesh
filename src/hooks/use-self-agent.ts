@@ -86,6 +86,30 @@ export function useSelfAgent() {
     [client],
   );
 
+  const renameConversation = useCallback(
+    (conversationId: string, title: string) => {
+      if (!client) return;
+      client.send('chat.rename_conversation', { conversationId, title });
+      useChatStore.getState().updateConversation(conversationId, { title });
+    },
+    [client],
+  );
+
+  const deleteConversation = useCallback(
+    (conversationId: string) => {
+      if (!client) return;
+      client.send('chat.delete_conversation', { conversationId });
+      useChatStore.getState().removeConversation(conversationId);
+    },
+    [client],
+  );
+
+  const deleteAllConversations = useCallback(() => {
+    if (!client) return;
+    client.send('chat.delete_all_conversations', {});
+    useChatStore.getState().clearAllConversations();
+  }, [client]);
+
   return {
     sendMessage,
     switchModel,
@@ -93,6 +117,9 @@ export function useSelfAgent() {
     abort,
     newConversation,
     loadConversation,
+    renameConversation,
+    deleteConversation,
+    deleteAllConversations,
     provider,
     model,
     dispatchMode,

@@ -42,6 +42,9 @@ interface ChatState {
   setConversations: (conversations: Conversation[]) => void;
   setCurrentConversation: (id: string | null) => void;
   addConversation: (conv: Conversation) => void;
+  updateConversation: (id: string, updates: Partial<Pick<Conversation, 'title' | 'updatedAt'>>) => void;
+  removeConversation: (id: string) => void;
+  clearAllConversations: () => void;
   setMessages: (messages: Message[]) => void;
   addMessage: (message: Message) => void;
 
@@ -80,6 +83,24 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setConversations: (conversations) => set({ conversations }),
   setCurrentConversation: (id) => set({ currentConversationId: id }),
   addConversation: (conv) => set((s) => ({ conversations: [conv, ...s.conversations] })),
+  updateConversation: (id, updates) => set((s) => ({
+    conversations: s.conversations.map((c) =>
+      c.id === id ? { ...c, ...updates } : c,
+    ),
+  })),
+  removeConversation: (id) => set((s) => ({
+    conversations: s.conversations.filter((c) => c.id !== id),
+    ...(s.currentConversationId === id
+      ? { currentConversationId: null, messages: [], streamingMessage: null, fileReadyMap: {} }
+      : {}),
+  })),
+  clearAllConversations: () => set({
+    conversations: [],
+    currentConversationId: null,
+    messages: [],
+    streamingMessage: null,
+    fileReadyMap: {},
+  }),
   setMessages: (messages) => set({ messages }),
   addMessage: (message) => set((s) => ({ messages: [...s.messages, message] })),
 

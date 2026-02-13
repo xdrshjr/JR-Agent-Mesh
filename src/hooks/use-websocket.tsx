@@ -15,6 +15,7 @@ import type {
   ChatFileReadyPayload,
   ChatErrorPayload,
   ChatNewConversationCreatedPayload,
+  ChatConversationUpdatedPayload,
   ChatConversationLoadedPayload,
   AgentCreatedPayload,
   AgentOutputPayload,
@@ -77,6 +78,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     client.on('init', (payload) => {
       const data = payload as InitPayload;
       useAgentStore.getState().setAgents(data.activeAgents);
+      if (data.conversations) {
+        useChatStore.getState().setConversations(data.conversations);
+      }
       if (data.currentConversationId) {
         useChatStore.getState().setCurrentConversation(data.currentConversationId);
       }
@@ -147,7 +151,22 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
     // New conversation created
     client.on('chat.new_conversation_created', (payload) => {
       const data = payload as ChatNewConversationCreatedPayload;
+      useChatStore.getState().addConversation({
+        id: data.conversationId,
+        title: data.title,
+        createdAt: data.createdAt,
+        updatedAt: data.updatedAt,
+        modelProvider: data.modelProvider,
+        modelId: data.modelId,
+        isArchived: data.isArchived,
+      });
       useChatStore.getState().setCurrentConversation(data.conversationId);
+    });
+
+    // Conversation updated (title / timestamp changed)
+    client.on('chat.conversation_updated', (payload) => {
+      const { conversationId, ...updates } = payload as ChatConversationUpdatedPayload;
+      useChatStore.getState().updateConversation(conversationId, updates);
     });
 
     // Conversation loaded with history

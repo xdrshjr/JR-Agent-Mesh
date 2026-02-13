@@ -8,6 +8,8 @@ import type {
   ChatSteerPayload,
   ChatSwitchModelPayload,
   ChatLoadConversationPayload,
+  ChatRenameConversationPayload,
+  ChatDeleteConversationPayload,
   ChatToggleDispatchPayload,
 } from '../../shared/types.js';
 import { getDb } from '../db/index.js';
@@ -57,11 +59,17 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
 
   // chat.new_conversation — User creates a new conversation
   registerHandler('chat.new_conversation', async (ws) => {
-    const conversationId = await selfAgent.createConversation();
-    logger.info('ChatHandler', `New conversation created: ${conversationId}`);
+    const conv = await selfAgent.createConversation();
+    logger.info('ChatHandler', `New conversation created: ${conv.id}`);
 
     sendToClient(ws, 'chat.new_conversation_created', {
-      conversationId,
+      conversationId: conv.id,
+      title: conv.title,
+      createdAt: conv.createdAt,
+      updatedAt: conv.updatedAt,
+      modelProvider: conv.modelProvider,
+      modelId: conv.modelId,
+      isArchived: conv.isArchived,
     });
   });
 
@@ -106,6 +114,42 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
         error: err.message,
       });
     }
+  });
+
+  // chat.rename_conversation — User renames a conversation
+  registerHandler('chat.rename_conversation', (ws, payload) => {
+    const data = payload as ChatRenameConversationPayload;
+    if (!data.conversationId || !data.title) return;
+
+    const updatedAt = selfAgent.renameConversation(data.conversationId, data.title);
+    logger.info('ChatHandler', `Renamed conversation ${data.conversationId}`);
+
+    sendToClient(ws, 'chat.conversation_updated', {
+      conversationId: data.conversationId,
+      title: data.title,
+      updatedAt,
+    });
+  });
+
+  // chat.delete_conversation — User deletes a single conversation
+  registerHandler('chat.delete_conversation', async (ws, payload) => {
+    const data = payload as ChatDeleteConversationPayload;
+    if (!data.conversationId) return;
+
+    await selfAgent.deleteConversation(data.conversationId);
+    logger.info('ChatHandler', `Deleted conversation ${data.conversationId}`);
+
+    sendToClient(ws, 'chat.conversation_deleted', {
+      conversationId: data.conversationId,
+    });
+  });
+
+  // chat.delete_all_conversations — User clears all conversations
+  registerHandler('chat.delete_all_conversations', (ws) => {
+    selfAgent.deleteAllConversations();
+    logger.info('ChatHandler', 'All conversations deleted');
+
+    sendToClient(ws, 'chat.all_conversations_deleted', {});
   });
 
   // chat.toggle_dispatch — User toggles dispatch mode

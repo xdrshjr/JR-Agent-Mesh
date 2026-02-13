@@ -21,12 +21,10 @@ import * as schema from '../db/schema.js';
 import { CredentialRepository } from '../db/repositories/index.js';
 import { broadcastToAllClients } from '../websocket/server.js';
 import { logger } from '../utils/logger.js';
-import type { ServerMessageType } from '../../shared/types.js';
-import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
-import { createFileTransferTool, createAgentDispatchTool } from './tools/custom-tools.js';
-import type { AgentProcessManager } from './agent-process-manager.js';
-import type { FileTransferService } from './file-transfer.js';
 import type {
+  ServerMessageType,
+  Conversation,
+  ChatConversationUpdatedPayload,
   ChatStreamDeltaPayload,
   ChatThinkingDeltaPayload,
   ChatToolStartPayload,
@@ -36,6 +34,10 @@ import type {
   TokenUsage,
   ToolCallRecord,
 } from '../../shared/types.js';
+import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
+import { createFileTransferTool, createAgentDispatchTool } from './tools/custom-tools.js';
+import type { AgentProcessManager } from './agent-process-manager.js';
+import type { FileTransferService } from './file-transfer.js';
 
 // --- Default System Prompt ---
 
@@ -618,7 +620,7 @@ export class SelfAgentService {
 
   // --- Conversation Management ---
 
-  async createConversation(): Promise<string> {
+  async createConversation(): Promise<Conversation> {
     const id = `conv-${uuidv4()}`;
     const now = Date.now();
 
@@ -640,7 +642,15 @@ export class SelfAgentService {
     }).run();
 
     logger.info('SelfAgent', `Created conversation ${id}`);
-    return id;
+    return {
+      id,
+      title: null,
+      modelProvider: this.agent.state.model.provider,
+      modelId: this.agent.state.model.id,
+      createdAt: now,
+      updatedAt: now,
+      isArchived: false,
+    };
   }
 
   async loadConversation(conversationId: string): Promise<void> {
@@ -750,12 +760,40 @@ export class SelfAgentService {
       .where(eq(schema.conversations.id, conversationId))
       .run();
 
-    // If this is the current conversation, create a new one
+    // If this is the current conversation, clear agent state
     if (this.currentConversationId === conversationId) {
-      await this.createConversation();
+      this.agent.clearMessages();
+      this.agent.clearAllQueues();
+      this.currentConversationId = null;
+      this.currentMessageId = null;
     }
 
     logger.info('SelfAgent', `Deleted conversation ${conversationId}`);
+  }
+
+  renameConversation(conversationId: string, title: string): number {
+    const db = getDb();
+    const now = Date.now();
+    db.update(schema.conversations)
+      .set({ title, updatedAt: now })
+      .where(eq(schema.conversations.id, conversationId))
+      .run();
+    logger.info('SelfAgent', `Renamed conversation ${conversationId} to "${title}"`);
+    return now;
+  }
+
+  deleteAllConversations(): void {
+    const db = getDb();
+    db.delete(schema.messages).run();
+    db.delete(schema.conversations).run();
+
+    // Clear agent state
+    this.agent.clearMessages();
+    this.agent.clearAllQueues();
+    this.currentConversationId = null;
+    this.currentMessageId = null;
+
+    logger.info('SelfAgent', 'Deleted all conversations');
   }
 
   private async createOrLoadConversation(conversationId: string): Promise<void> {
@@ -880,25 +918,28 @@ export class SelfAgentService {
       }
 
       // Update conversation timestamp
+      const updatedAt = Date.now();
       db.update(schema.conversations)
-        .set({ updatedAt: Date.now() })
+        .set({ updatedAt })
         .where(eq(schema.conversations.id, conversationId))
         .run();
 
-      // Auto-generate title from first user message if needed
-      this.maybeUpdateTitle(conversationId);
+      // Auto-generate title from first user message if needed, and broadcast update
+      this.maybeUpdateTitle(conversationId, updatedAt);
     } catch (err) {
       logger.error('SelfAgent', 'Failed to persist messages', err);
     }
   }
 
-  private maybeUpdateTitle(conversationId: string): void {
+  private maybeUpdateTitle(conversationId: string, updatedAt: number): void {
     const db = getDb();
     const conv = db.select().from(schema.conversations)
       .where(eq(schema.conversations.id, conversationId))
       .get();
 
-    if (conv && !conv.title) {
+    if (!conv) return;
+
+    if (!conv.title) {
       // Use the first user message as title
       const firstUserMsg = this.agent.state.messages.find(
         (m) => (m as any).role === 'user',
@@ -909,13 +950,27 @@ export class SelfAgentService {
         const title = text.length > 50 ? text.slice(0, 47) + '...' : text;
 
         if (title) {
+          const now = Date.now();
           db.update(schema.conversations)
-            .set({ title })
+            .set({ title, updatedAt: now })
             .where(eq(schema.conversations.id, conversationId))
             .run();
+
+          this.broadcast<ChatConversationUpdatedPayload>('chat.conversation_updated', {
+            conversationId,
+            title,
+            updatedAt: now,
+          });
+          return;
         }
       }
     }
+
+    // Broadcast updatedAt so sidebar reorders by most recent activity
+    this.broadcast<ChatConversationUpdatedPayload>('chat.conversation_updated', {
+      conversationId,
+      updatedAt,
+    });
   }
 
   // --- Public getters ---

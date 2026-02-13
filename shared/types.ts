@@ -165,6 +165,7 @@ export interface InitPayload {
   selfAgentStatus: 'ready' | 'initializing';
   activeAgents: AgentInfo[];
   currentConversationId: string | null;
+  conversations: Conversation[];
 }
 
 export interface ChatStreamDeltaPayload {
@@ -263,6 +264,9 @@ export type ClientMessageType =
   | 'chat.switch_model'
   | 'chat.new_conversation'
   | 'chat.load_conversation'
+  | 'chat.rename_conversation'
+  | 'chat.delete_conversation'
+  | 'chat.delete_all_conversations'
   | 'chat.toggle_dispatch'
   | 'agent.create'
   | 'agent.send_input'
@@ -276,6 +280,35 @@ export type ClientMessageType =
 
 export interface ChatNewConversationCreatedPayload {
   conversationId: string;
+  title: string | null;
+  createdAt: number;
+  updatedAt: number;
+  modelProvider: string | null;
+  modelId: string | null;
+  isArchived: boolean;
+}
+
+export interface ChatConversationUpdatedPayload {
+  conversationId: string;
+  title?: string | null;
+  updatedAt?: number;
+}
+
+export interface ChatRenameConversationPayload {
+  conversationId: string;
+  title: string;
+}
+
+export interface ChatDeleteConversationPayload {
+  conversationId: string;
+}
+
+export interface ChatConversationDeletedPayload {
+  conversationId: string;
+}
+
+export interface ChatAllConversationsDeletedPayload {
+  // empty — signals all conversations were cleared
 }
 
 export interface ChatConversationLoadedPayload {
@@ -294,6 +327,9 @@ export type ServerMessageType =
   | 'chat.file_ready'
   | 'chat.error'
   | 'chat.new_conversation_created'
+  | 'chat.conversation_updated'
+  | 'chat.conversation_deleted'
+  | 'chat.all_conversations_deleted'
   | 'chat.conversation_loaded'
   | 'agent.created'
   | 'agent.output'
