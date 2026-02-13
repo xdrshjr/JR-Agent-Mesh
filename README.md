@@ -1,6 +1,10 @@
-# JR-Agent-Mesh
+<p align="center">
+  <img src="assets/logo.png" alt="JR Agent Mesh Logo" width="200" />
+</p>
 
-A web-based multi-agent management platform that lets you orchestrate and interact with multiple AI coding agents (Claude Code, OpenCode, Codex) through a unified interface.
+<h1 align="center">JR-Agent-Mesh</h1>
+
+<p align="center">A web-based multi-agent management platform that lets you orchestrate and interact with multiple AI coding agents (Claude Code, OpenCode, Codex) through a unified interface.</p>
 
 ## Features
 
