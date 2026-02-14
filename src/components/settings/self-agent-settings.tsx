@@ -23,7 +23,11 @@ export function SelfAgentSettings() {
   const provider = store.defaultProvider;
 
   const detected = store.detectedModels[provider];
-  const modelList = detected?.length ? detected : MODELS[provider] || [];
+  const baseList = detected?.length ? detected : MODELS[provider] || [];
+  // If current model isn't in the list, append it so SelectValue can render
+  const modelList = store.defaultModel && !baseList.some((m) => m.id === store.defaultModel)
+    ? [...baseList, { id: store.defaultModel, name: store.defaultModel }]
+    : baseList;
   const isDetecting = store.isDetectingModels[provider] || false;
   const detectionError = store.modelDetectionErrors[provider] || null;
 
