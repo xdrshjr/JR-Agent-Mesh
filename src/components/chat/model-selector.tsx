@@ -1,14 +1,27 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useSelfAgent } from '@/hooks/use-self-agent';
+import { useSettingsStore } from '@/stores/settings-store';
 import { PROVIDERS, MODELS } from '@/lib/model-options';
 
 export function ModelSelector() {
   const { provider, model, dispatchMode, switchModel, toggleDispatch } = useSelfAgent();
+  const detectedModels = useSettingsStore((s) => s.detectedModels);
 
-  const models = MODELS[provider] || [];
+  const models = useMemo(() => {
+    // Prefer detected models, fall back to static list
+    const detected = detectedModels[provider];
+    const base = detected?.length ? detected : MODELS[provider] || [];
+
+    // If current model isn't in the list, append it so SelectValue can render
+    if (model && !base.some((m) => m.id === model)) {
+      return [...base, { id: model, name: model }];
+    }
+    return base;
+  }, [provider, model, detectedModels]);
 
   return (
     <div className="flex items-center gap-3 px-4 py-2 border-b border-[var(--border)] bg-white">
