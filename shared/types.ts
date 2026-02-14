@@ -78,6 +78,23 @@ export interface Conversation {
   isArchived: boolean;
 }
 
+// --- Skill Types ---
+
+export interface SkillInfo {
+  id: string;
+  name: string;
+  description: string | null;
+  source: 'git' | 'conversation';
+  gitUrl: string | null;
+  gitDir: string | null;
+  filePath: string;
+  conversationId: string | null;
+  userId: string;
+  isGlobal: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // --- WebSocket Message Protocol ---
 
 export interface WebSocketMessage<T = unknown> {
@@ -162,6 +179,11 @@ export interface FileUploadedPayload {
   filename: string;
   size: number;
   conversationId: string;
+}
+
+export interface ChatSetSessionSkillsPayload {
+  conversationId: string;
+  skillIds: string[];
 }
 
 // Server → Client messages
@@ -286,7 +308,8 @@ export type ClientMessageType =
   | 'agent.restart'
   | 'agent.delete'
   | 'agent.get_output'
-  | 'file.uploaded';
+  | 'file.uploaded'
+  | 'chat.set_session_skills';
 
 export interface ChatNewConversationCreatedPayload {
   conversationId: string;

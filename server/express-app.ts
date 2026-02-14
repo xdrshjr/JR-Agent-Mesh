@@ -1,11 +1,12 @@
 import express from 'express';
 import multer from 'multer';
-import { existsSync, mkdirSync, createReadStream, statSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, createReadStream, statSync, renameSync, readFileSync, readdirSync } from 'node:fs';
 import { join, extname, basename } from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './utils/logger.js';
 import type { AgentProcessManager } from './services/agent-process-manager.js';
 import type { SelfAgentService } from './services/self-agent.js';
+import type { SkillManagementService } from './services/skill-management.js';
 import type { AgentTypeId } from '../shared/types.js';
 import { getAllAgentTypes } from './services/agent-registry.js';
 import {
@@ -24,10 +25,11 @@ export interface ExpressAppOptions {
   dataDir: string;
   agentProcessManager: AgentProcessManager;
   selfAgentService?: SelfAgentService;
+  skillManagementService?: SkillManagementService;
 }
 
 export function createExpressApp(options: ExpressAppOptions) {
-  const { agentProcessManager, selfAgentService } = options;
+  const { agentProcessManager, selfAgentService, skillManagementService } = options;
   const app = express();
 
   // Middleware
@@ -562,6 +564,352 @@ export function createExpressApp(options: ExpressAppOptions) {
       res.status(500).json({ error: err.message });
     }
   });
+
+  // --- Skills ---
+
+  if (skillManagementService) {
+    // GET /api/skills — List all skills
+    app.get('/api/skills', (_req, res) => {
+      try {
+        const skills = skillManagementService.getAll();
+        res.json(skills.map((s) => ({
+          ...s,
+          isGlobal: s.isGlobal === 1,
+        })));
+      } catch (err: any) {
+        logger.error('REST', 'Failed to list skills', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // --- Fixed-path routes MUST come before parameterized /api/skills/:id ---
+
+    // POST /api/skills/install — Install skill from Git
+    app.post('/api/skills/install', async (req, res) => {
+      try {
+        const { gitUrl } = req.body;
+        if (!gitUrl) {
+          res.status(400).json({ error: 'gitUrl is required' });
+          return;
+        }
+
+        // Extract directory name from URL
+        const urlParts = gitUrl.replace(/\.git$/, '').split('/');
+        const dirName = urlParts[urlParts.length - 1] || `skill-${Date.now()}`;
+        const installDir = join(options.dataDir, 'skills', 'installed', dirName);
+
+        // Execute git clone
+        const { execSync } = await import('node:child_process');
+        try {
+          execSync(`git clone "${gitUrl}" "${installDir}"`, {
+            timeout: 60000,
+            stdio: 'pipe',
+          });
+        } catch (cloneErr: any) {
+          res.status(400).json({ error: `git clone failed: ${cloneErr.message}` });
+          return;
+        }
+
+        // Find .md files in the repo
+        const mdFiles: string[] = [];
+
+        function findMdFiles(dir: string, relativeTo: string) {
+          const entries = readdirSync(dir);
+          for (const entry of entries) {
+            if (entry.startsWith('.')) continue;
+            const fullPath = join(dir, entry);
+            const st = statSync(fullPath);
+            if (st.isDirectory()) {
+              findMdFiles(fullPath, relativeTo);
+            } else if (entry.endsWith('.md') && entry.toLowerCase() !== 'readme.md' && entry.toLowerCase() !== 'license.md') {
+              mdFiles.push(fullPath.substring(relativeTo.length + 1).replace(/\\/g, '/'));
+            }
+          }
+        }
+
+        findMdFiles(installDir, join(options.dataDir, 'skills'));
+
+        // If no non-readme .md files, try skill.md or any .md including readme
+        if (mdFiles.length === 0) {
+          const readmePath = `installed/${dirName}/README.md`;
+          const fullReadmePath = join(options.dataDir, 'skills', readmePath);
+          if (existsSync(fullReadmePath)) {
+            mdFiles.push(readmePath);
+          }
+        }
+
+        if (mdFiles.length === 0) {
+          res.status(400).json({ error: 'No skill files (.md) found in repository' });
+          return;
+        }
+
+        // Create skill records
+        const createdSkills = [];
+        for (const mdFile of mdFiles) {
+          // Extract name from first heading
+          const content = readFileSync(join(options.dataDir, 'skills', mdFile), 'utf-8');
+          const headingMatch = content.match(/^#\s+(.+)$/m);
+          const name = headingMatch ? headingMatch[1].trim() : mdFile.split('/').pop()?.replace('.md', '') || dirName;
+
+          // Extract description from first paragraph after heading
+          const descMatch = content.match(/^#\s+.+\n+(.+)/m);
+          const description = descMatch ? descMatch[1].trim().substring(0, 200) : null;
+
+          const skill = skillManagementService.create({
+            name,
+            description: description || undefined,
+            source: 'git',
+            gitUrl,
+            gitDir: dirName,
+            filePath: mdFile,
+          });
+
+          createdSkills.push({ ...skill, isGlobal: skill.isGlobal === 1 });
+        }
+
+        res.json({ success: true, skills: createdSkills });
+      } catch (err: any) {
+        logger.error('REST', 'Failed to install skill', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // POST /api/skills/generate — AI generates skill draft from conversation
+    app.post('/api/skills/generate', async (req, res) => {
+      try {
+        const { conversationId } = req.body;
+        if (!conversationId) {
+          res.status(400).json({ error: 'conversationId is required' });
+          return;
+        }
+
+        // Load conversation messages
+        const messages = messageRepo.listByConversation(conversationId);
+
+        if (!messages || messages.length === 0) {
+          res.status(400).json({ error: 'No messages found in conversation' });
+          return;
+        }
+
+        // Build conversation summary
+        const summary = messages
+          .filter((m: any) => m.role === 'user' || m.role === 'assistant')
+          .map((m: any) => {
+            const role = m.role === 'user' ? 'User' : 'Assistant';
+            const content = m.content || '';
+            return `${role}: ${content.substring(0, 500)}`;
+          })
+          .join('\n\n');
+
+        // For now, generate a simple draft without calling AI
+        // This avoids complexity of creating a separate agent session
+        const firstUserMsg = messages.find((m: any) => m.role === 'user');
+        const topic = firstUserMsg?.content?.substring(0, 100) || 'General Knowledge';
+
+        const draft = {
+          name: topic.length > 50 ? topic.substring(0, 47) + '...' : topic,
+          description: `Skill extracted from conversation about: ${topic.substring(0, 100)}`,
+          content: `# ${topic}\n\n## Overview\nSkill generated from conversation.\n\n## Key Points\n\n${summary.substring(0, 2000)}`,
+        };
+
+        res.json({ draft });
+      } catch (err: any) {
+        logger.error('REST', 'Failed to generate skill draft', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // GET /api/skills/active/:conversationId — Get active skills for conversation
+    app.get('/api/skills/active/:conversationId', (req, res) => {
+      try {
+        const skills = skillManagementService.getActiveForConversation('default', req.params.conversationId);
+        res.json(skills.map((s) => ({ ...s, isGlobal: s.isGlobal === 1 })));
+      } catch (err: any) {
+        logger.error('REST', `Failed to get active skills for ${req.params.conversationId}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // --- Parameterized routes below ---
+
+    // GET /api/skills/:id — Get single skill
+    app.get('/api/skills/:id', (req, res) => {
+      try {
+        const skill = skillManagementService.getById(req.params.id);
+        if (!skill) {
+          res.status(404).json({ error: 'Skill not found' });
+          return;
+        }
+        res.json({ ...skill, isGlobal: skill.isGlobal === 1 });
+      } catch (err: any) {
+        logger.error('REST', `Failed to get skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // GET /api/skills/:id/content — Get skill file content
+    app.get('/api/skills/:id/content', (req, res) => {
+      try {
+        const content = skillManagementService.getSkillContent(req.params.id);
+        if (content === null) {
+          res.status(404).json({ error: 'Skill content not found' });
+          return;
+        }
+        res.json({ content });
+      } catch (err: any) {
+        logger.error('REST', `Failed to get skill content ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // POST /api/skills — Create skill (from conversation save)
+    app.post('/api/skills', (req, res) => {
+      try {
+        const { name, description, content, conversationId } = req.body;
+        if (!name || !content) {
+          res.status(400).json({ error: 'name and content are required' });
+          return;
+        }
+
+        const kebabName = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        const filePath = `custom/${kebabName}.md`;
+
+        const skill = skillManagementService.create({
+          name,
+          description,
+          source: 'conversation',
+          filePath,
+          content,
+          conversationId,
+        });
+
+        res.status(201).json({ ...skill, isGlobal: skill.isGlobal === 1 });
+      } catch (err: any) {
+        logger.error('REST', 'Failed to create skill', err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // PUT /api/skills/:id — Update skill metadata + content
+    app.put('/api/skills/:id', (req, res) => {
+      try {
+        const { name, description, content } = req.body;
+        skillManagementService.update(req.params.id, { name, description, content });
+        const updated = skillManagementService.getById(req.params.id);
+        res.json(updated ? { ...updated, isGlobal: updated.isGlobal === 1 } : { success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to update skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // DELETE /api/skills/:id — Delete skill
+    app.delete('/api/skills/:id', (req, res) => {
+      try {
+        skillManagementService.delete(req.params.id);
+        res.json({ success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to delete skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // POST /api/skills/:id/update — Update skill from Git
+    app.post('/api/skills/:id/update', async (req, res) => {
+      try {
+        const skill = skillManagementService.getById(req.params.id);
+        if (!skill || !skill.gitDir) {
+          res.status(400).json({ error: 'Skill not found or not from git' });
+          return;
+        }
+
+        const installDir = join(options.dataDir, 'skills', 'installed', skill.gitDir);
+        const { execSync } = await import('node:child_process');
+
+        try {
+          execSync('git pull', {
+            cwd: installDir,
+            timeout: 60000,
+            stdio: 'pipe',
+          });
+        } catch (pullErr: any) {
+          res.status(400).json({ error: `git pull failed: ${pullErr.message}` });
+          return;
+        }
+
+        res.json({ success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to update skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // PUT /api/skills/:id/global — Set/unset global activation
+    app.put('/api/skills/:id/global', (req, res) => {
+      try {
+        const { active } = req.body;
+        if (typeof active !== 'boolean') {
+          res.status(400).json({ error: 'active (boolean) is required' });
+          return;
+        }
+        skillManagementService.setGlobalActivation(req.params.id, active);
+
+        // Refresh system prompt
+        if (selfAgentService) {
+          selfAgentService.refreshSystemPrompt();
+        }
+
+        res.json({ success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to set global activation ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // POST /api/skills/:id/activate — Session-level activate
+    app.post('/api/skills/:id/activate', (req, res) => {
+      try {
+        const { conversationId } = req.body;
+        if (!conversationId) {
+          res.status(400).json({ error: 'conversationId is required' });
+          return;
+        }
+        skillManagementService.activateForConversation(req.params.id, conversationId);
+
+        // Refresh system prompt
+        if (selfAgentService) {
+          selfAgentService.refreshSystemPrompt();
+        }
+
+        res.json({ success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to activate skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // POST /api/skills/:id/deactivate — Session-level deactivate
+    app.post('/api/skills/:id/deactivate', (req, res) => {
+      try {
+        const { conversationId } = req.body;
+        if (!conversationId) {
+          res.status(400).json({ error: 'conversationId is required' });
+          return;
+        }
+        skillManagementService.deactivateForConversation(req.params.id, conversationId);
+
+        // Refresh system prompt
+        if (selfAgentService) {
+          selfAgentService.refreshSystemPrompt();
+        }
+
+        res.json({ success: true });
+      } catch (err: any) {
+        logger.error('REST', `Failed to deactivate skill ${req.params.id}`, err);
+        res.status(500).json({ error: err.message });
+      }
+    });
+  }
 
   // --- Data Export / Import ---
 

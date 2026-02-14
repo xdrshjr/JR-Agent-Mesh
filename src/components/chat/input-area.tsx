@@ -1,11 +1,14 @@
 'use client';
 
 import { useState, useRef, useCallback, type KeyboardEvent, type DragEvent, type ClipboardEvent } from 'react';
-import { Paperclip, Send, Square, Upload, Brain, Trash2 } from 'lucide-react';
+import { Paperclip, Send, Square, Upload, Brain, Trash2, BookmarkPlus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { AttachmentPreview } from './attachment-preview';
+import { SaveSkillDialog } from './save-skill-dialog';
 import { useSelfAgent } from '@/hooks/use-self-agent';
+import { useChatStore } from '@/stores/chat-store';
+import { useSkillStore } from '@/stores/skill-store';
 import { cn, formatFileSize } from '@/lib/utils';
 import type { Attachment } from '@/lib/types';
 
@@ -37,6 +40,22 @@ export function InputArea() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
   const { sendMessage, abort, clearConversation, setThinkingLevel, thinkingLevel, isLoading } = useSelfAgent();
+  const currentConversationId = useChatStore((s) => s.currentConversationId);
+  const messages = useChatStore((s) => s.messages);
+  const generateSkillDraft = useSkillStore((s) => s.generateSkillDraft);
+  const isGeneratingSkill = useSkillStore((s) => s.isGenerating);
+  const [skillDraft, setSkillDraft] = useState<{ name: string; description: string; content: string } | null>(null);
+  const hasMessages = messages.length >= 2; // at least 1 user + 1 assistant
+
+  const handleSaveAsSkill = useCallback(async () => {
+    if (!currentConversationId || isGeneratingSkill) return;
+    try {
+      const draft = await generateSkillDraft(currentConversationId);
+      setSkillDraft(draft);
+    } catch (err) {
+      console.error('Failed to generate skill draft:', err);
+    }
+  }, [currentConversationId, isGeneratingSkill, generateSkillDraft]);
 
   // --- Validation ---
 
@@ -349,20 +368,36 @@ export function InputArea() {
               </SelectContent>
             </Select>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs text-[var(--text-secondary)] hover:text-[var(--error)]"
-            onClick={() => {
-              if (window.confirm('Clear all messages in the current conversation? This will also reset the AI memory.')) {
-                clearConversation();
-              }
-            }}
-            disabled={isLoading}
-          >
-            <Trash2 className="w-3.5 h-3.5 mr-1" />
-            Clear
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-[var(--text-secondary)]"
+              onClick={handleSaveAsSkill}
+              disabled={isLoading || isGeneratingSkill || !hasMessages}
+            >
+              {isGeneratingSkill ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <BookmarkPlus className="w-3.5 h-3.5 mr-1" />
+              )}
+              Save as Skill
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-[var(--text-secondary)] hover:text-[var(--error)]"
+              onClick={() => {
+                if (window.confirm('Clear all messages in the current conversation? This will also reset the AI memory.')) {
+                  clearConversation();
+                }
+              }}
+              disabled={isLoading}
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1" />
+              Clear
+            </Button>
+          </div>
         </div>
 
         <div
@@ -427,6 +462,15 @@ export function InputArea() {
           )}
         </div>
       </div>
+
+      {/* Save as Skill Dialog */}
+      {skillDraft && (
+        <SaveSkillDialog
+          draft={skillDraft}
+          conversationId={currentConversationId || undefined}
+          onClose={() => setSkillDraft(null)}
+        />
+      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { CredentialEditor } from '@/components/settings/credential-editor';
 import { BackendAgentSettings } from '@/components/settings/backend-agent-settings';
 import { NotificationSettings } from '@/components/settings/notification-settings';
 import { GeneralSettings } from '@/components/settings/general-settings';
+import { SkillManagementPanel } from '@/components/settings/skill-management-panel';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Check } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
@@ -60,6 +61,7 @@ export default function SettingsPage() {
           <Tabs defaultValue="self-agent">
             <TabsList className="w-full">
               <TabsTrigger value="self-agent">Self Agent</TabsTrigger>
+              <TabsTrigger value="skills">Skills</TabsTrigger>
               <TabsTrigger value="backend-agents">Backend Agents</TabsTrigger>
               <TabsTrigger value="notifications">Notifications</TabsTrigger>
               <TabsTrigger value="general">General</TabsTrigger>
@@ -70,6 +72,10 @@ export default function SettingsPage() {
                 <SelfAgentSettings />
                 <CredentialEditor />
               </div>
+            </TabsContent>
+
+            <TabsContent value="skills">
+              <SkillManagementPanel />
             </TabsContent>
 
             <TabsContent value="backend-agents">

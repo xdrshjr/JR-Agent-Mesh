@@ -1,15 +1,28 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Zap } from 'lucide-react';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { useSelfAgent } from '@/hooks/use-self-agent';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useSkillStore } from '@/stores/skill-store';
 import { PROVIDERS, MODELS } from '@/lib/model-options';
+import { SkillViewDialog } from './skill-view-dialog';
 
 export function ModelSelector() {
   const { provider, model, dispatchMode, switchModel, toggleDispatch } = useSelfAgent();
   const detectedModels = useSettingsStore((s) => s.detectedModels);
+  const skills = useSkillStore((s) => s.skills);
+  const fetchSkills = useSkillStore((s) => s.fetchSkills);
+  const [showSkillDialog, setShowSkillDialog] = useState(false);
+
+  useEffect(() => {
+    fetchSkills();
+  }, [fetchSkills]);
+
+  const activeSkillCount = skills.filter((s) => s.isGlobal).length;
 
   const models = useMemo(() => {
     // Prefer detected models, fall back to static list
@@ -59,11 +72,25 @@ export function ModelSelector() {
         </SelectContent>
       </Select>
 
-      {/* Dispatch mode toggle */}
-      <div className="flex items-center gap-2 ml-auto">
-        <span className="text-xs text-[var(--text-secondary)]">Dispatch Mode</span>
-        <Switch checked={dispatchMode} onCheckedChange={toggleDispatch} />
+      {/* Skills button + Dispatch mode toggle */}
+      <div className="flex items-center gap-3 ml-auto">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs gap-1"
+          onClick={() => setShowSkillDialog(true)}
+        >
+          <Zap className="w-3 h-3" />
+          Skills{activeSkillCount > 0 ? ` (${activeSkillCount})` : ''}
+        </Button>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-[var(--text-secondary)]">Dispatch Mode</span>
+          <Switch checked={dispatchMode} onCheckedChange={toggleDispatch} />
+        </div>
       </div>
+
+      {showSkillDialog && <SkillViewDialog onClose={() => setShowSkillDialog(false)} />}
     </div>
   );
 }

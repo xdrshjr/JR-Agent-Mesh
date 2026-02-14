@@ -125,6 +125,35 @@ function createTables(sqlite: Database.Database) {
       expires_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_file_conversation ON file_transfers(conversation_id);
+
+    CREATE TABLE IF NOT EXISTS skills (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      source TEXT NOT NULL,
+      git_url TEXT,
+      git_dir TEXT,
+      file_path TEXT NOT NULL,
+      conversation_id TEXT,
+      user_id TEXT NOT NULL DEFAULT 'default',
+      is_global INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_skills_user ON skills(user_id);
+    CREATE INDEX IF NOT EXISTS idx_skills_source ON skills(source);
+
+    CREATE TABLE IF NOT EXISTS skill_activations (
+      id TEXT PRIMARY KEY,
+      skill_id TEXT NOT NULL,
+      conversation_id TEXT NOT NULL,
+      user_id TEXT NOT NULL DEFAULT 'default',
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE,
+      FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_skill_activations_conversation ON skill_activations(conversation_id);
+    CREATE INDEX IF NOT EXISTS idx_skill_activations_skill ON skill_activations(skill_id);
   `);
 }
 

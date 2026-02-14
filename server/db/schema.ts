@@ -97,3 +97,36 @@ export const fileTransfers = sqliteTable('file_transfers', {
 }, (table) => [
   index('idx_file_conversation').on(table.conversationId),
 ]);
+
+// --- Skills ---
+
+export const skills = sqliteTable('skills', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  description: text('description'),
+  source: text('source').notNull(), // 'git' | 'conversation'
+  gitUrl: text('git_url'),
+  gitDir: text('git_dir'),
+  filePath: text('file_path').notNull(),
+  conversationId: text('conversation_id'),
+  userId: text('user_id').notNull().default('default'),
+  isGlobal: integer('is_global').notNull().default(0),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, (table) => [
+  index('idx_skills_user').on(table.userId),
+  index('idx_skills_source').on(table.source),
+]);
+
+// --- Skill Activations (session-level) ---
+
+export const skillActivations = sqliteTable('skill_activations', {
+  id: text('id').primaryKey(),
+  skillId: text('skill_id').notNull().references(() => skills.id, { onDelete: 'cascade' }),
+  conversationId: text('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  userId: text('user_id').notNull().default('default'),
+  createdAt: integer('created_at').notNull(),
+}, (table) => [
+  index('idx_skill_activations_conversation').on(table.conversationId),
+  index('idx_skill_activations_skill').on(table.skillId),
+]);

@@ -13,6 +13,7 @@ import type {
   ChatToggleDispatchPayload,
   ChatClearConversationPayload,
   ChatSetThinkingLevelPayload,
+  ChatSetSessionSkillsPayload,
 } from '../../shared/types.js';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
@@ -177,6 +178,16 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
 
     selfAgent.setThinkingLevel(data.level);
     logger.info('ChatHandler', `Thinking level set to: ${data.level}`);
+  });
+
+  // chat.set_session_skills — User updates session skill activation
+  registerHandler('chat.set_session_skills', (_ws, payload) => {
+    const data = payload as ChatSetSessionSkillsPayload;
+    if (!data.conversationId) return;
+
+    // Refresh system prompt to pick up skill changes
+    selfAgent.refreshSystemPrompt();
+    logger.info('ChatHandler', `Session skills updated for ${data.conversationId}`);
   });
 
   logger.info('ChatHandler', 'Chat WebSocket handlers registered');

@@ -17,6 +17,7 @@ import { initAgentRegistry } from './services/agent-registry.js';
 import { registerChatHandlers } from './websocket/chat-handlers.js';
 import { registerAgentHandlers } from './websocket/agent-handlers.js';
 import { startCleanupJob, stopCleanupJob } from './db/cleanup.js';
+import { SkillManagementService } from './services/skill-management.js';
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const DATA_DIR = resolve(process.env.DATA_DIR || './data');
@@ -72,6 +73,7 @@ async function main() {
   agentProcessManager.recoverAgents();
 
   const fileTransferService = new FileTransferService(DATA_DIR);
+  const skillManagementService = new SkillManagementService(DATA_DIR);
 
   let selfAgent: SelfAgentService;
   try {
@@ -79,6 +81,7 @@ async function main() {
       dataDir: DATA_DIR,
       agentProcessManager,
       fileTransferService,
+      skillManagementService,
     });
   } catch (err) {
     logger.error('Server', 'Failed to initialize SelfAgentService', err);
@@ -104,6 +107,7 @@ async function main() {
     dataDir: DATA_DIR,
     agentProcessManager,
     selfAgentService: selfAgent,
+    skillManagementService,
   });
 
   // Step 6: Initialize Next.js

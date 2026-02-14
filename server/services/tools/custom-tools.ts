@@ -4,6 +4,7 @@ import type { TextContent } from '@mariozechner/pi-ai';
 import { resolve, join } from 'node:path';
 import type { AgentProcessManager } from '../agent-process-manager.js';
 import type { FileTransferService } from '../file-transfer.js';
+import type { SkillManagementService } from '../skill-management.js';
 
 // --- Helper ---
 
@@ -92,8 +93,34 @@ const AgentDispatchParams = Type.Object({
   workDir: Type.Optional(Type.String({ description: 'Working directory for the agent (optional, auto-assigned per conversation)' })),
 });
 
+function buildEnhancedTask(originalTask: string, skills: Array<{ name: string; content: string }>): string {
+  if (skills.length === 0) return originalTask;
+
+  const MAX_SKILL_CHARS = 30000;
+  let totalChars = 0;
+  let enhanced = '# Reference Skills\n\nThe following skills provide context and guidelines for this task:\n\n';
+  let truncated = false;
+
+  for (const skill of skills) {
+    if (totalChars + skill.content.length > MAX_SKILL_CHARS) {
+      truncated = true;
+      break;
+    }
+    enhanced += `---\n## ${skill.name}\n\n${skill.content}\n\n`;
+    totalChars += skill.content.length;
+  }
+
+  if (truncated) {
+    enhanced += '(Some skills were omitted due to size limits)\n\n';
+  }
+
+  enhanced += `---\n\n# Task\n\n${originalTask}`;
+  return enhanced;
+}
+
 export function createAgentDispatchTool(
   agentProcessManager: AgentProcessManager,
+  skillManagementService: SkillManagementService | undefined,
   getContext: AgentDispatchContextProvider,
 ): AgentTool<typeof AgentDispatchParams> {
   return {
@@ -133,8 +160,19 @@ export function createAgentDispatchTool(
           return errorResult('Failed to find or create an agent for this task');
         }
 
+        // Build enhanced task with skill content
+        let taskContent = params.task;
+        if (skillManagementService && ctx.conversationId) {
+          try {
+            const skills = skillManagementService.getActiveSkillContents('default', ctx.conversationId);
+            taskContent = buildEnhancedTask(params.task, skills);
+          } catch {
+            // Ignore skill injection errors
+          }
+        }
+
         // Send the task to the agent
-        agentProcessManager.sendInput(agent.id, params.task);
+        agentProcessManager.sendInput(agent.id, taskContent);
 
         return textResult(
           `Task dispatched to ${agent.name} (${agent.id}). User can view progress on the Agents page.`,

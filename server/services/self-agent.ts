@@ -38,6 +38,7 @@ import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.j
 import { createFileTransferTool, createAgentDispatchTool } from './tools/custom-tools.js';
 import type { AgentProcessManager } from './agent-process-manager.js';
 import type { FileTransferService } from './file-transfer.js';
+import type { SkillManagementService } from './skill-management.js';
 
 // --- Default System Prompt ---
 
@@ -63,6 +64,7 @@ export interface SelfAgentServiceOptions {
   dataDir: string;
   agentProcessManager: AgentProcessManager;
   fileTransferService: FileTransferService;
+  skillManagementService?: SkillManagementService;
 }
 
 export class SelfAgentService {
@@ -72,6 +74,7 @@ export class SelfAgentService {
   private dispatchMode = false;
   private agentProcessManager: AgentProcessManager;
   private fileTransferService: FileTransferService;
+  private skillManagementService?: SkillManagementService;
   private credentialRepo: CredentialRepository;
   private dataDir: string;
   private unsubscribe: (() => void) | null = null;
@@ -83,6 +86,7 @@ export class SelfAgentService {
     this.dataDir = options.dataDir;
     this.agentProcessManager = options.agentProcessManager;
     this.fileTransferService = options.fileTransferService;
+    this.skillManagementService = options.skillManagementService;
     this.credentialRepo = new CredentialRepository();
 
     // Load settings from DB
@@ -284,7 +288,7 @@ export class SelfAgentService {
     ];
 
     if (includeDispatch) {
-      tools.push(createAgentDispatchTool(this.agentProcessManager, () => ({
+      tools.push(createAgentDispatchTool(this.agentProcessManager, this.skillManagementService, () => ({
         conversationId: this.currentConversationId ?? undefined,
         dataDir: this.dataDir,
       })));
@@ -300,7 +304,33 @@ export class SelfAgentService {
     if (this.dispatchMode) {
       prompt += DISPATCH_PROMPT_SUFFIX;
     }
+
+    // Inject active skill contents
+    if (this.skillManagementService && this.currentConversationId) {
+      try {
+        const activeSkills = this.skillManagementService.getActiveSkillContents(
+          'default',
+          this.currentConversationId,
+        );
+        if (activeSkills.length > 0) {
+          prompt += '\n\n# Active Skills\n\nThe following skills are available. Use them when relevant:\n\n';
+          for (const skill of activeSkills) {
+            prompt += `<skill name="${skill.name}">\n${skill.content}\n</skill>\n\n`;
+          }
+        }
+      } catch (err) {
+        logger.error('SelfAgent', 'Failed to inject skill contents', err);
+      }
+    }
+
     return prompt;
+  }
+
+  refreshSystemPrompt(): void {
+    const { systemPrompt } = this.loadSettings();
+    const prompt = this.buildSystemPrompt(systemPrompt || undefined);
+    this.agent.setSystemPrompt(prompt);
+    logger.info('SelfAgent', 'System prompt refreshed with skills');
   }
 
   // --- Agent Event Handling → WebSocket Forwarding ---
@@ -830,6 +860,7 @@ export class SelfAgentService {
     }
 
     this.agent.replaceMessages(agentMessages);
+    this.refreshSystemPrompt();
     logger.info('SelfAgent', `Loaded conversation ${conversationId} with ${agentMessages.length} messages`);
   }
 
