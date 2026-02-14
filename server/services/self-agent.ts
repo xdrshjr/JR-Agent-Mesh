@@ -85,7 +85,7 @@ export class SelfAgentService {
     this.credentialRepo = new CredentialRepository();
 
     // Load settings from DB
-    const { provider, modelId, systemPrompt } = this.loadSettings();
+    const { provider, modelId, systemPrompt, thinkingLevel } = this.loadSettings();
 
     // Get model from pi-ai
     const model = this.resolveModel(provider, modelId);
@@ -99,7 +99,7 @@ export class SelfAgentService {
         systemPrompt: systemPrompt || DEFAULT_SYSTEM_PROMPT,
         model,
         tools,
-        thinkingLevel: 'medium',
+        thinkingLevel: (thinkingLevel || 'medium') as any,
       },
       streamFn: streamSimple,
       getApiKey: (prov) => this.getApiKeyForProvider(prov),
@@ -120,6 +120,7 @@ export class SelfAgentService {
     customUrl: string;
     customModelId: string;
     customApiMode: string;
+    thinkingLevel: string;
   } {
     const db = getDb();
     const rows = db.select().from(schema.settings).all();
@@ -132,6 +133,7 @@ export class SelfAgentService {
       customUrl: map.get('self_agent.custom_url') || '',
       customModelId: map.get('self_agent.custom_model_id') || '',
       customApiMode: map.get('self_agent.custom_api_mode') || 'openai',
+      thinkingLevel: map.get('self_agent.thinking_level') || 'medium',
     };
   }
 
@@ -598,6 +600,77 @@ export class SelfAgentService {
   setSystemPrompt(prompt: string): void {
     this.agent.setSystemPrompt(this.buildSystemPrompt(prompt || undefined));
     logger.info('SelfAgent', 'System prompt updated');
+  }
+
+  // --- Clear Conversation ---
+
+  clearConversation(conversationId: string): void {
+    // Only clear agent memory if this is the active conversation
+    if (this.currentConversationId === conversationId) {
+      this.agent.clearMessages();
+      this.agent.clearAllQueues();
+    }
+
+    // Delete messages from DB
+    try {
+      const db = getDb();
+      db.delete(schema.messages)
+        .where(eq(schema.messages.conversationId, conversationId))
+        .run();
+
+      // Reset conversation title
+      const now = Date.now();
+      db.update(schema.conversations)
+        .set({ title: null, updatedAt: now })
+        .where(eq(schema.conversations.id, conversationId))
+        .run();
+
+      this.broadcast<ChatConversationUpdatedPayload>('chat.conversation_updated', {
+        conversationId,
+        title: null,
+        updatedAt: now,
+      });
+    } catch (err) {
+      logger.error('SelfAgent', 'Failed to clear conversation', err);
+    }
+
+    logger.info('SelfAgent', `Cleared conversation ${conversationId}`);
+  }
+
+  // --- Thinking Level ---
+
+  setThinkingLevel(level: string): void {
+    this.agent.setThinkingLevel(level as any);
+
+    // Persist to settings
+    try {
+      const db = getDb();
+      const now = Date.now();
+      const existing = db.select().from(schema.settings)
+        .where(eq(schema.settings.key, 'self_agent.thinking_level'))
+        .get();
+
+      if (existing) {
+        db.update(schema.settings)
+          .set({ value: level, updatedAt: now })
+          .where(eq(schema.settings.key, 'self_agent.thinking_level'))
+          .run();
+      } else {
+        db.insert(schema.settings).values({
+          key: 'self_agent.thinking_level',
+          value: level,
+          updatedAt: now,
+        }).run();
+      }
+    } catch (err) {
+      logger.error('SelfAgent', 'Failed to persist thinking level', err);
+    }
+
+    logger.info('SelfAgent', `Thinking level set to: ${level}`);
+  }
+
+  getThinkingLevel(): string {
+    return (this.agent.state as any).thinkingLevel || 'medium';
   }
 
   // --- Dispatch Mode ---

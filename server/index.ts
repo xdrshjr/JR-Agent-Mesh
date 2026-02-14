@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { existsSync, writeFileSync, readFileSync } from 'node:fs';
 import next from 'next';
 import { createExpressApp } from './express-app.js';
-import { initWebSocketServer, setActiveAgentsProvider, setCurrentModelProvider, stopHeartbeat } from './websocket/server.js';
+import { initWebSocketServer, setActiveAgentsProvider, setCurrentModelProvider, setThinkingLevelProvider, stopHeartbeat } from './websocket/server.js';
 import { initDatabase, closeDatabase, getDb } from './db/index.js';
 import * as schema from './db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -94,6 +94,9 @@ async function main() {
 
   // Provide current model info to WebSocket init payload
   setCurrentModelProvider(() => selfAgent.getCurrentModel());
+
+  // Provide current thinking level to WebSocket init payload
+  setThinkingLevelProvider(() => selfAgent.getThinkingLevel());
 
   // Step 5: Create Express application
   logger.info('Server', 'Step 4: Creating Express application...');

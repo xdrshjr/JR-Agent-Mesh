@@ -11,6 +11,8 @@ import type {
   ChatRenameConversationPayload,
   ChatDeleteConversationPayload,
   ChatToggleDispatchPayload,
+  ChatClearConversationPayload,
+  ChatSetThinkingLevelPayload,
 } from '../../shared/types.js';
 import { getDb } from '../db/index.js';
 import * as schema from '../db/schema.js';
@@ -157,6 +159,24 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
     const data = payload as ChatToggleDispatchPayload;
     selfAgent.toggleDispatch(data.enabled);
     logger.info('ChatHandler', `Dispatch mode: ${data.enabled}`);
+  });
+
+  // chat.clear_conversation — User clears current conversation (messages + AI memory)
+  registerHandler('chat.clear_conversation', (_ws, payload) => {
+    const data = payload as ChatClearConversationPayload;
+    if (!data.conversationId) return;
+
+    selfAgent.clearConversation(data.conversationId);
+    logger.info('ChatHandler', `Cleared conversation ${data.conversationId}`);
+  });
+
+  // chat.set_thinking_level — User changes thinking level
+  registerHandler('chat.set_thinking_level', (_ws, payload) => {
+    const data = payload as ChatSetThinkingLevelPayload;
+    if (!data.level) return;
+
+    selfAgent.setThinkingLevel(data.level);
+    logger.info('ChatHandler', `Thinking level set to: ${data.level}`);
   });
 
   logger.info('ChatHandler', 'Chat WebSocket handlers registered');

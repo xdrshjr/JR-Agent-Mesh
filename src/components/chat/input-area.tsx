@@ -1,12 +1,20 @@
 'use client';
 
 import { useState, useRef, useCallback, type KeyboardEvent, type DragEvent, type ClipboardEvent } from 'react';
-import { Paperclip, Send, Square, Upload } from 'lucide-react';
+import { Paperclip, Send, Square, Upload, Brain, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/select';
 import { AttachmentPreview } from './attachment-preview';
 import { useSelfAgent } from '@/hooks/use-self-agent';
 import { cn, formatFileSize } from '@/lib/utils';
 import type { Attachment } from '@/lib/types';
+
+const THINKING_LEVELS = [
+  { id: 'off', name: 'Off' },
+  { id: 'low', name: 'Low' },
+  { id: 'medium', name: 'Medium' },
+  { id: 'high', name: 'High' },
+];
 
 const UPLOAD_MAX_FILE_SIZE = 50 * 1024 * 1024;   // 50MB
 const UPLOAD_MAX_TOTAL_SIZE = 200 * 1024 * 1024;  // 200MB
@@ -28,7 +36,7 @@ export function InputArea() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounterRef = useRef(0);
-  const { sendMessage, abort, isLoading } = useSelfAgent();
+  const { sendMessage, abort, clearConversation, setThinkingLevel, thinkingLevel, isLoading } = useSelfAgent();
 
   // --- Validation ---
 
@@ -324,6 +332,39 @@ export function InputArea() {
       )}
 
       <div className="max-w-3xl mx-auto px-4 py-3">
+        {/* Toolbar: thinking level + clear conversation */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <Brain className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+            <Select value={thinkingLevel} onValueChange={setThinkingLevel}>
+              <SelectTrigger className="h-7 w-[110px] text-xs border-[var(--border)]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {THINKING_LEVELS.map((l) => (
+                  <SelectItem key={l.id} value={l.id}>
+                    {l.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 text-xs text-[var(--text-secondary)] hover:text-[var(--error)]"
+            onClick={() => {
+              if (window.confirm('Clear all messages in the current conversation? This will also reset the AI memory.')) {
+                clearConversation();
+              }
+            }}
+            disabled={isLoading}
+          >
+            <Trash2 className="w-3.5 h-3.5 mr-1" />
+            Clear
+          </Button>
+        </div>
+
         <div
           className={cn(
             'flex items-end gap-2 border border-[var(--border)] rounded-[var(--radius)] px-3 py-2 bg-white',

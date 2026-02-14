@@ -25,12 +25,19 @@ let getActiveAgentsFn: (() => AgentInfo[]) | null = null;
 // Callback to get current model info for init payload
 let getCurrentModelFn: (() => { provider: string; model: string }) | null = null;
 
+// Callback to get current thinking level for init payload
+let getThinkingLevelFn: (() => string) | null = null;
+
 export function setActiveAgentsProvider(fn: () => AgentInfo[]) {
   getActiveAgentsFn = fn;
 }
 
 export function setCurrentModelProvider(fn: () => { provider: string; model: string }) {
   getCurrentModelFn = fn;
+}
+
+export function setThinkingLevelProvider(fn: () => string) {
+  getThinkingLevelFn = fn;
 }
 
 export function initWebSocketServer(httpServer: HTTPServer) {
@@ -84,6 +91,7 @@ export function initWebSocketServer(httpServer: HTTPServer) {
       conversations,
       currentProvider: currentModel.provider,
       currentModel: currentModel.model,
+      currentThinkingLevel: getThinkingLevelFn ? getThinkingLevelFn() : 'medium',
     };
     ws.send(createMessage('init', initPayload));
 

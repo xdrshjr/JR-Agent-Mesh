@@ -45,6 +45,10 @@ export interface Attachment {
   filename: string;
 }
 
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; toolCallId: string };
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -58,6 +62,7 @@ export interface Message {
   content: string | null;
   thinking: string | null;
   toolCalls: ToolCallRecord[] | null;
+  contentBlocks?: ContentBlock[] | null;
   attachments: Attachment[] | null;
   tokenUsage: TokenUsage | null;
   createdAt: number;
@@ -168,6 +173,7 @@ export interface InitPayload {
   conversations: Conversation[];
   currentProvider: string;
   currentModel: string;
+  currentThinkingLevel?: string;
 }
 
 export interface ChatStreamDeltaPayload {
@@ -270,6 +276,8 @@ export type ClientMessageType =
   | 'chat.delete_conversation'
   | 'chat.delete_all_conversations'
   | 'chat.toggle_dispatch'
+  | 'chat.clear_conversation'
+  | 'chat.set_thinking_level'
   | 'agent.create'
   | 'agent.send_input'
   | 'agent.send_raw_input'
@@ -299,6 +307,14 @@ export interface ChatConversationUpdatedPayload {
 export interface ChatRenameConversationPayload {
   conversationId: string;
   title: string;
+}
+
+export interface ChatClearConversationPayload {
+  conversationId: string;
+}
+
+export interface ChatSetThinkingLevelPayload {
+  level: string;
 }
 
 export interface ChatDeleteConversationPayload {

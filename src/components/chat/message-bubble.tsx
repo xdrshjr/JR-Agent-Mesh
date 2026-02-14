@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from './markdown-renderer';
 import { ToolTimeline } from './tool-timeline';
 import { FileAttachment } from './file-attachment';
+import { groupContentBlocks } from '@/lib/content-blocks';
 import type { Message } from '@/lib/types';
 import { useChatStore } from '@/stores/chat-store';
 import { User, Bot } from 'lucide-react';
@@ -64,14 +65,23 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             </details>
           )}
 
-          {/* Content */}
-          {message.content && (
-            <MarkdownRenderer content={message.content} />
-          )}
-
-          {/* Tool Timeline */}
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <ToolTimeline toolCalls={message.toolCalls} />
+          {/* Content + Tool Timeline (interleaved) */}
+          {message.contentBlocks && message.contentBlocks.length > 0 ? (
+            groupContentBlocks(message.contentBlocks, message.toolCalls || [])
+              .map((group, i) =>
+                group.type === 'text'
+                  ? <MarkdownRenderer key={`text-${i}`} content={group.text} />
+                  : <ToolTimeline key={`tools-${i}`} toolCalls={group.toolCalls} />
+              )
+          ) : (
+            <>
+              {message.content && (
+                <MarkdownRenderer content={message.content} />
+              )}
+              {message.toolCalls && message.toolCalls.length > 0 && (
+                <ToolTimeline toolCalls={message.toolCalls} />
+              )}
+            </>
           )}
 
           {/* Attachments */}

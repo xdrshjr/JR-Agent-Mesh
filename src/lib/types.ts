@@ -7,6 +7,7 @@ export type {
   MessageRole,
   ToolCallRecord,
   Attachment,
+  ContentBlock,
   TokenUsage,
   Message,
   Conversation,

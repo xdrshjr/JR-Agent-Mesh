@@ -6,7 +6,8 @@ import { MessageBubble } from './message-bubble';
 import { TypingIndicator } from './typing-indicator';
 import { MarkdownRenderer } from './markdown-renderer';
 import { ToolTimeline } from './tool-timeline';
-import { MessageSquare, Bot } from 'lucide-react';
+import { groupContentBlocks } from '@/lib/content-blocks';
+import { MessageSquare, Bot, Loader2 } from 'lucide-react';
 
 export function MessageArea() {
   const messages = useChatStore((s) => s.messages);
@@ -16,7 +17,7 @@ export function MessageArea() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingMessage?.content, streamingMessage?.toolCalls?.length]);
+  }, [messages, streamingMessage?.contentBlocks, streamingMessage?.toolCalls?.length]);
 
   if (messages.length === 0 && !streamingMessage) {
     return (
@@ -52,13 +53,20 @@ export function MessageArea() {
                     {streamingMessage.thinking}
                   </div>
                 )}
-                {streamingMessage.content && (
-                  <MarkdownRenderer content={streamingMessage.content} />
-                )}
-                {streamingMessage.toolCalls.length > 0 && (
-                  <ToolTimeline toolCalls={streamingMessage.toolCalls} />
-                )}
-                {!streamingMessage.content && streamingMessage.toolCalls.length === 0 && (
+                {streamingMessage.contentBlocks.length > 0 ? (
+                  <>
+                    {groupContentBlocks(streamingMessage.contentBlocks, streamingMessage.toolCalls)
+                      .map((group, i) =>
+                        group.type === 'text'
+                          ? <MarkdownRenderer key={`text-${i}`} content={group.text} />
+                          : <ToolTimeline key={`tools-${i}`} toolCalls={group.toolCalls} />
+                      )}
+                    <div className="flex items-center gap-2 pt-2">
+                      <Loader2 className="w-3 h-3 text-[var(--primary)] animate-spin" />
+                      <span className="text-xs text-[var(--text-muted)]">Generating...</span>
+                    </div>
+                  </>
+                ) : (
                   <TypingIndicator />
                 )}
               </div>

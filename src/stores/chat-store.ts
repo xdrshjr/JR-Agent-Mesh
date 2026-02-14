@@ -1,10 +1,10 @@
 import { create } from 'zustand';
-import type { Message, Conversation, ToolCallRecord, TokenUsage, Attachment } from '@/lib/types';
+import type { Message, Conversation, ToolCallRecord, TokenUsage, Attachment, ContentBlock } from '@/lib/types';
 
 interface StreamingMessage {
   id: string;
   conversationId: string;
-  content: string;
+  contentBlocks: ContentBlock[];
   thinking: string;
   toolCalls: ToolCallRecord[];
   attachments: Attachment[];
@@ -34,6 +34,9 @@ interface ChatState {
 
   // File ready info (download URLs and sizes for file_transfer tool results)
   fileReadyMap: Record<string, FileReadyInfo>;
+
+  // Thinking level
+  thinkingLevel: string;
 
   // UI state
   isLoading: boolean;
@@ -65,6 +68,7 @@ interface ChatState {
   setModel: (model: string) => void;
   setDispatchMode: (enabled: boolean) => void;
 
+  setThinkingLevel: (level: string) => void;
   setIsLoading: (loading: boolean) => void;
   clearMessages: () => void;
 }
@@ -78,6 +82,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   provider: 'anthropic',
   model: 'claude-sonnet-4-5-20250929',
   dispatchMode: false,
+  thinkingLevel: 'medium',
   isLoading: false,
 
   setConversations: (conversations) => set({ conversations }),
@@ -109,7 +114,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingMessage: {
         id: messageId,
         conversationId,
-        content: '',
+        contentBlocks: [],
         thinking: '',
         toolCalls: [],
         attachments: [],
@@ -120,10 +125,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   appendStreamDelta: (delta) =>
     set((s) => {
       if (!s.streamingMessage) return s;
+      const blocks = [...s.streamingMessage.contentBlocks];
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === 'text') {
+        blocks[blocks.length - 1] = { type: 'text', text: last.text + delta };
+      } else {
+        blocks.push({ type: 'text', text: delta });
+      }
       return {
         streamingMessage: {
           ...s.streamingMessage,
-          content: s.streamingMessage.content + delta,
+          contentBlocks: blocks,
         },
       };
     }),
@@ -146,6 +158,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         streamingMessage: {
           ...s.streamingMessage,
           toolCalls: [...s.streamingMessage.toolCalls, toolCall],
+          contentBlocks: [...s.streamingMessage.contentBlocks, { type: 'tool_use' as const, toolCallId: toolCall.id }],
         },
       };
     }),
@@ -167,13 +180,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { streamingMessage } = get();
     if (!streamingMessage) return;
 
+    // Build concatenated content from text blocks for DB compatibility
+    const contentStr = streamingMessage.contentBlocks
+      .filter((b): b is ContentBlock & { type: 'text' } => b.type === 'text')
+      .map((b) => b.text)
+      .join('');
+
     const completedMessage: Message = {
       id: streamingMessage.id,
       conversationId: streamingMessage.conversationId,
       role: 'assistant',
-      content: streamingMessage.content || null,
+      content: contentStr || null,
       thinking: streamingMessage.thinking || null,
       toolCalls: streamingMessage.toolCalls.length > 0 ? streamingMessage.toolCalls : null,
+      contentBlocks: streamingMessage.contentBlocks.length > 0 ? streamingMessage.contentBlocks : null,
       attachments: streamingMessage.attachments.length > 0 ? streamingMessage.attachments : null,
       tokenUsage: usage ?? null,
       createdAt: Date.now(),
@@ -224,6 +244,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setModel: (model) => set({ model }),
   setDispatchMode: (enabled) => set({ dispatchMode: enabled }),
 
+  setThinkingLevel: (level) => set({ thinkingLevel: level }),
   setIsLoading: (loading) => set({ isLoading: loading }),
   clearMessages: () => set({ messages: [], streamingMessage: null, fileReadyMap: {} }),
 }));

@@ -11,6 +11,7 @@ export function useSelfAgent() {
   const provider = useChatStore((s) => s.provider);
   const model = useChatStore((s) => s.model);
   const dispatchMode = useChatStore((s) => s.dispatchMode);
+  const thinkingLevel = useChatStore((s) => s.thinkingLevel);
   const isLoading = useChatStore((s) => s.isLoading);
 
   const sendMessage = useCallback(
@@ -110,6 +111,20 @@ export function useSelfAgent() {
     useChatStore.getState().clearAllConversations();
   }, [client]);
 
+  const clearConversation = useCallback(() => {
+    if (!client) return;
+    const convId = useChatStore.getState().currentConversationId;
+    if (!convId) return;
+    client.send('chat.clear_conversation', { conversationId: convId });
+    useChatStore.getState().clearMessages();
+  }, [client]);
+
+  const setThinkingLevel = useCallback((level: string) => {
+    if (!client) return;
+    useChatStore.getState().setThinkingLevel(level);
+    client.send('chat.set_thinking_level', { level });
+  }, [client]);
+
   return {
     sendMessage,
     switchModel,
@@ -120,9 +135,12 @@ export function useSelfAgent() {
     renameConversation,
     deleteConversation,
     deleteAllConversations,
+    clearConversation,
+    setThinkingLevel,
     provider,
     model,
     dispatchMode,
+    thinkingLevel,
     isLoading,
   };
 }

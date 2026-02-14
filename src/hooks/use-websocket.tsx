@@ -91,6 +91,9 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
       if (data.currentModel) {
         useChatStore.getState().setModel(data.currentModel);
       }
+      if (data.currentThinkingLevel) {
+        useChatStore.getState().setThinkingLevel(data.currentThinkingLevel);
+      }
     });
 
     // Chat streaming
@@ -114,7 +117,11 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
     client.on('chat.tool_start', (payload) => {
       const data = payload as ChatToolStartPayload;
-      useChatStore.getState().addToolCallStart({
+      const store = useChatStore.getState();
+      if (!store.streamingMessage) {
+        store.startStreaming(data.messageId, data.conversationId);
+      }
+      store.addToolCallStart({
         id: data.toolCallId,
         tool: data.tool,
         args: data.args,
