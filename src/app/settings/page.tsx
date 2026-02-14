@@ -11,6 +11,7 @@ import { SkillManagementPanel } from '@/components/settings/skill-management-pan
 import { Button } from '@/components/ui/button';
 import { Save, Loader2, Check } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useSelfAgent } from '@/hooks/use-self-agent';
 
 export default function SettingsPage() {
   const fetchSettings = useSettingsStore((s) => s.fetchSettings);
@@ -18,6 +19,7 @@ export default function SettingsPage() {
   const isSaving = useSettingsStore((s) => s.isSaving);
   const isLoading = useSettingsStore((s) => s.isLoading);
   const [saved, setSaved] = useState(false);
+  const { switchModel } = useSelfAgent();
 
   useEffect(() => {
     fetchSettings();
@@ -26,6 +28,9 @@ export default function SettingsPage() {
   const handleSave = async () => {
     try {
       await saveSettings();
+      // Sync server's active model to match saved settings
+      const { defaultProvider, defaultModel } = useSettingsStore.getState();
+      switchModel(defaultProvider, defaultModel);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {
