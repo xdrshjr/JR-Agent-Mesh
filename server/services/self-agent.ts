@@ -54,7 +54,8 @@ const DISPATCH_PROMPT_SUFFIX = `
 
 你还可以将任务分发给后台 Agent：
 - 使用 agent_dispatch 工具将任务发送给指定的后台 Agent
-- 根据任务性质选择合适的 Agent，或让用户指定`;
+- 根据任务性质选择合适的 Agent，或让用户指定
+- 每个对话有独立的工作目录（workspace），workDir 会自动分配，无需手动指定`;
 
 // --- SelfAgentService ---
 
@@ -283,7 +284,10 @@ export class SelfAgentService {
     ];
 
     if (includeDispatch) {
-      tools.push(createAgentDispatchTool(this.agentProcessManager));
+      tools.push(createAgentDispatchTool(this.agentProcessManager, () => ({
+        conversationId: this.currentConversationId ?? undefined,
+        dataDir: this.dataDir,
+      })));
     }
 
     return tools;

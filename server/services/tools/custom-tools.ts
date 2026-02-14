@@ -1,7 +1,7 @@
 import { Type } from '@sinclair/typebox';
 import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import type { TextContent } from '@mariozechner/pi-ai';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import type { AgentProcessManager } from '../agent-process-manager.js';
 import type { FileTransferService } from '../file-transfer.js';
 
@@ -78,15 +78,23 @@ function formatSize(bytes: number): string {
 
 // --- Agent Dispatch Tool ---
 
+export interface AgentDispatchContext {
+  conversationId?: string;
+  dataDir: string;
+}
+
+export type AgentDispatchContextProvider = () => AgentDispatchContext;
+
 const AgentDispatchParams = Type.Object({
   agentId: Type.Optional(Type.String({ description: 'Specific agent ID to send task to' })),
   agentType: Type.Optional(Type.String({ description: 'Agent type (e.g. "claude-code", "opencode", "codex")' })),
   task: Type.String({ description: 'Task description to send to the agent' }),
-  workDir: Type.Optional(Type.String({ description: 'Working directory for the agent (optional)' })),
+  workDir: Type.Optional(Type.String({ description: 'Working directory for the agent (optional, auto-assigned per conversation)' })),
 });
 
 export function createAgentDispatchTool(
   agentProcessManager: AgentProcessManager,
+  getContext: AgentDispatchContextProvider,
 ): AgentTool<typeof AgentDispatchParams> {
   return {
     name: 'agent_dispatch',
@@ -94,10 +102,16 @@ export function createAgentDispatchTool(
     description:
       'Dispatch a task to a backend agent (e.g. Claude Code, OpenCode, Codex). ' +
       'Specify agentId to target a specific running agent, agentType to find or create one of that type, ' +
-      'or omit both to auto-select based on the task.',
+      'or omit both to auto-select based on the task. ' +
+      'Each conversation has its own workspace directory; workDir is auto-assigned unless explicitly provided.',
     parameters: AgentDispatchParams,
     async execute(_toolCallId, params) {
       try {
+        // Compute workDir: explicit param > per-conversation auto > undefined
+        const ctx = getContext();
+        const workDir = params.workDir
+          || (ctx.conversationId ? resolve(join(ctx.dataDir, 'workspaces', ctx.conversationId)) : undefined);
+
         let agent: { id: string; name: string } | null = null;
 
         if (params.agentId) {
@@ -109,10 +123,10 @@ export function createAgentDispatchTool(
         } else if (params.agentType) {
           agent = await agentProcessManager.findOrCreate(
             params.agentType as any,
-            params.workDir,
+            workDir,
           );
         } else {
-          agent = await agentProcessManager.autoSelect(params.task);
+          agent = await agentProcessManager.autoSelect(params.task, workDir);
         }
 
         if (!agent) {

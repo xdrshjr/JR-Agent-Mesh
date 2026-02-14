@@ -712,9 +712,18 @@ export class AgentProcessManager {
   // --- Dispatch helpers (used by custom-tools.ts) ---
 
   findOrCreate(typeId: AgentTypeId, workDir?: string): Promise<AgentInfo> {
-    // Find existing running agent of this type
+    // Find existing running agent of this type, matching workspace when provided
     for (const proc of this.processes.values()) {
       if (proc.typeId === typeId && proc.status === 'RUNNING') {
+        if (workDir) {
+          // Only reuse agents with matching workDir (normalize paths for comparison)
+          if (resolve(proc.workDir) === resolve(workDir)) {
+            return Promise.resolve(this.toAgentInfo(proc));
+          }
+          // Different workspace — skip this agent
+          continue;
+        }
+        // No workDir constraint — legacy behavior: reuse any running agent of this type
         return Promise.resolve(this.toAgentInfo(proc));
       }
     }
@@ -722,14 +731,20 @@ export class AgentProcessManager {
     return this.createProcess(typeId, undefined, workDir);
   }
 
-  autoSelect(_task: string): Promise<AgentInfo> {
-    // Find any running agent, or create a claude-code one by default
+  autoSelect(_task: string, workDir?: string): Promise<AgentInfo> {
+    // Find any running agent (matching workspace when provided), or create a claude-code one by default
     for (const proc of this.processes.values()) {
       if (proc.status === 'RUNNING') {
+        if (workDir) {
+          if (resolve(proc.workDir) === resolve(workDir)) {
+            return Promise.resolve(this.toAgentInfo(proc));
+          }
+          continue;
+        }
         return Promise.resolve(this.toAgentInfo(proc));
       }
     }
-    return this.createProcess('claude-code');
+    return this.createProcess('claude-code', undefined, workDir);
   }
 
   // --- Helpers ---
