@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { PROVIDERS } from '@/lib/model-options';
 
 // --- Credential Types ---
 
@@ -294,6 +295,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 
   saveCredential: async (key: string, value: string, displayName?: string, provider?: string) => {
     const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
+    const affectedProvider = provider ?? credType?.provider;
     try {
       const res = await fetch(`/api/credentials/${key}`, {
         method: 'PUT',
@@ -301,10 +303,18 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         body: JSON.stringify({
           value,
           displayName: displayName || credType?.displayName || key,
-          provider: provider ?? credType?.provider ?? null,
+          provider: affectedProvider ?? null,
         }),
       });
       if (!res.ok) throw new Error('Failed to save credential');
+
+      // Clear stale detected models for the affected provider so auto-detect re-triggers
+      if (affectedProvider) {
+        set((s) => {
+          const { [affectedProvider]: _, ...rest } = s.detectedModels;
+          return { detectedModels: rest };
+        });
+      }
 
       // Refresh credentials list
       await get().fetchCredentials();
@@ -371,3 +381,28 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 }));
+
+// --- Shared Utilities ---
+
+const predefinedProviderIds = new Set<string>(PROVIDERS.map((p) => p.id));
+
+/**
+ * Build a merged provider list: static PROVIDERS + custom credential providers.
+ * Custom credential display names are cleaned (e.g. "DeepSeek API Key" → "DeepSeek").
+ */
+export function buildProviderList(credentials: CredentialInfo[]): { id: string; name: string }[] {
+  const customProviders = credentials
+    .filter((c) => c.hasValue && c.provider && !predefinedProviderIds.has(c.provider))
+    .map((c) => {
+      const raw = c.displayName || c.provider!;
+      const name = raw.replace(/\s*api\s*key\s*$/i, '').trim() || raw;
+      return { id: c.provider!, name };
+    });
+  const seen = new Set<string>(PROVIDERS.map((p) => p.id));
+  const unique = customProviders.filter((p) => {
+    if (seen.has(p.id)) return false;
+    seen.add(p.id);
+    return true;
+  });
+  return [...PROVIDERS, ...unique];
+}

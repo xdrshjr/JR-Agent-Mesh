@@ -173,14 +173,13 @@ export class SelfAgentService {
       custom: 'custom_key',
     };
 
-    const credKey = credKeyMap[provider];
-    if (credKey) {
-      try {
-        const value = this.credentialRepo.get(credKey);
-        if (value) return value;
-      } catch {
-        // Decryption failed or DB not available
-      }
+    // For predefined providers use the map; for custom providers the key IS the provider id
+    const credKey = credKeyMap[provider] || provider;
+    try {
+      const value = this.credentialRepo.get(credKey);
+      if (value) return value;
+    } catch {
+      // Decryption failed or DB not available
     }
 
     return undefined;
@@ -224,7 +223,22 @@ export class SelfAgentService {
         return found;
       }
     } catch {
-      // Provider not recognized as known — fallback
+      // Provider not recognized as known — try custom credential provider
+      const overrideUrl = this.getProviderApiUrl(provider);
+      if (overrideUrl) {
+        return {
+          id: modelId,
+          name: modelId,
+          api: 'openai-completions',
+          provider,
+          baseUrl: overrideUrl,
+          reasoning: false,
+          input: ['text', 'image'] as ('text' | 'image')[],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 128000,
+          maxTokens: 4096,
+        };
+      }
     }
 
     // Fallback: try anthropic claude-sonnet-4-5

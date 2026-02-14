@@ -6,23 +6,52 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useSelfAgent } from '@/hooks/use-self-agent';
-import { useSettingsStore } from '@/stores/settings-store';
+import { useSettingsStore, CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
 import { useSkillStore } from '@/stores/skill-store';
-import { PROVIDERS, MODELS } from '@/lib/model-options';
+import { MODELS } from '@/lib/model-options';
 import { SkillViewDialog } from './skill-view-dialog';
 
 export function ModelSelector() {
   const { provider, model, dispatchMode, switchModel, toggleDispatch } = useSelfAgent();
   const detectedModels = useSettingsStore((s) => s.detectedModels);
+  const credentials = useSettingsStore((s) => s.credentials);
+  const fetchCredentials = useSettingsStore((s) => s.fetchCredentials);
+  const detectModels = useSettingsStore((s) => s.detectModels);
   const skills = useSkillStore((s) => s.skills);
   const fetchSkills = useSkillStore((s) => s.fetchSkills);
   const [showSkillDialog, setShowSkillDialog] = useState(false);
+
+  // Load credentials on mount so custom providers appear
+  useEffect(() => {
+    fetchCredentials();
+  }, [fetchCredentials]);
 
   useEffect(() => {
     fetchSkills();
   }, [fetchSkills]);
 
+  // Auto-detect models when provider has credentials but no detected models
+  useEffect(() => {
+    if (detectedModels[provider]) return;
+    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider);
+    const credInfo = credType
+      ? credentials.find((c) => c.key === credType.key)
+      : credentials.find((c) => c.provider === provider);
+    if (credInfo?.hasValue) {
+      detectModels(provider);
+    }
+  }, [provider, credentials, detectedModels]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const activeSkillCount = skills.filter((s) => s.isGlobal).length;
+
+  // Build provider list, ensuring the current provider is always included
+  const allProviders = useMemo(() => {
+    const list = buildProviderList(credentials);
+    if (provider && !list.some((p) => p.id === provider)) {
+      list.push({ id: provider, name: provider });
+    }
+    return list;
+  }, [credentials, provider]);
 
   const models = useMemo(() => {
     // Prefer detected models, fall back to static list
@@ -42,7 +71,9 @@ export function ModelSelector() {
       <Select
         value={provider}
         onValueChange={(val) => {
-          const firstModel = MODELS[val]?.[0]?.id || '';
+          const detectedForVal = detectedModels[val];
+          const list = detectedForVal?.length ? detectedForVal : MODELS[val] || [];
+          const firstModel = list[0]?.id || '';
           switchModel(val, firstModel);
         }}
       >
@@ -50,7 +81,7 @@ export function ModelSelector() {
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {PROVIDERS.map((p) => (
+          {allProviders.map((p) => (
             <SelectItem key={p.id} value={p.id}>
               {p.name}
             </SelectItem>

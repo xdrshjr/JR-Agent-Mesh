@@ -377,11 +377,8 @@ export function createExpressApp(options: ExpressAppOptions) {
         custom: 'custom_key',
       };
 
-      const credKey = credKeyMap[provider];
-      if (!credKey) {
-        res.status(400).json({ error: `Unknown provider: ${provider}` });
-        return;
-      }
+      // For predefined providers use the map; for custom providers the key IS the provider id
+      const credKey = credKeyMap[provider] || provider;
 
       // Look up API key from credential store
       const apiKey = credentialRepo.get(credKey);

@@ -77,7 +77,8 @@ export async function detectProviderModels(
           ? await detectAnthropic(baseUrl, apiKey)
           : await detectOpenAICompat(baseUrl, apiKey);
       default:
-        return { models: [], error: `Unsupported provider: ${provider}` };
+        // Custom credential providers — default to OpenAI-compatible detection
+        return await detectOpenAICompat(baseUrl, apiKey);
     }
   } catch (err: any) {
     logger.error('ModelDetection', `Failed to detect models for ${provider}`, err);

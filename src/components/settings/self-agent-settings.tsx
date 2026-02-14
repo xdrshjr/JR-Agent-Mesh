@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
-import { useSettingsStore, CREDENTIAL_TYPES } from '@/stores/settings-store';
+import { useEffect, useMemo } from 'react';
+import { useSettingsStore, CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select';
-import { PROVIDERS, MODELS, CUSTOM_API_MODES } from '@/lib/model-options';
+import { MODELS, CUSTOM_API_MODES } from '@/lib/model-options';
 
 const DEFAULT_SYSTEM_PROMPT = '';
 
@@ -21,6 +21,11 @@ export function SelfAgentSettings() {
   const store = useSettingsStore();
   const isCustomProvider = store.defaultProvider === 'custom';
   const provider = store.defaultProvider;
+
+  const allProviders = useMemo(
+    () => buildProviderList(store.credentials),
+    [store.credentials],
+  );
 
   const detected = store.detectedModels[provider];
   const baseList = detected?.length ? detected : MODELS[provider] || [];
@@ -36,15 +41,18 @@ export function SelfAgentSettings() {
     store.fetchCredentials();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-detect models on mount when credentials exist for the current provider
+  // Auto-detect models when provider changes or detected models were invalidated
   useEffect(() => {
+    if (store.detectedModels[provider]) return; // already detected
+    // Find matching credential: predefined or custom (provider matches)
     const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider);
-    if (!credType) return;
-    const credInfo = store.credentials.find((c) => c.key === credType.key);
-    if (credInfo?.hasValue && !store.detectedModels[provider]) {
+    const credInfo = credType
+      ? store.credentials.find((c) => c.key === credType.key)
+      : store.credentials.find((c) => c.provider === provider);
+    if (credInfo?.hasValue) {
       store.detectModels(provider);
     }
-  }, [provider, store.credentials]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [provider, store.credentials, store.detectedModels]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDetectModels = () => {
     store.detectModels(provider);
@@ -72,7 +80,7 @@ export function SelfAgentSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PROVIDERS.map((p) => (
+                {allProviders.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name}
                   </SelectItem>
