@@ -3,7 +3,7 @@ import type { AgentTool, AgentToolResult } from '@mariozechner/pi-agent-core';
 import type { TextContent } from '@mariozechner/pi-ai';
 import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, isAbsolute, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 // --- Helper ---
@@ -22,6 +22,32 @@ function errorResult(error: string): AgentToolResult<undefined> {
   };
 }
 
+// --- Workspace Context ---
+
+export interface WorkspaceContext {
+  conversationId?: string;
+  dataDir: string;
+}
+
+export type WorkspaceContextProvider = () => WorkspaceContext;
+
+function resolveWorkspacePath(userPath: string, ctx: WorkspaceContext): string {
+  if (isAbsolute(userPath)) return resolve(userPath);
+  if (!ctx.conversationId) return resolve(userPath);
+
+  const workspaceDir = resolve(join(ctx.dataDir, 'workspaces', ctx.conversationId));
+  mkdirSync(workspaceDir, { recursive: true });
+  return resolve(join(workspaceDir, userPath));
+}
+
+function getWorkspaceCwd(ctx: WorkspaceContext): string {
+  if (!ctx.conversationId) return process.cwd();
+
+  const workspaceDir = resolve(join(ctx.dataDir, 'workspaces', ctx.conversationId));
+  mkdirSync(workspaceDir, { recursive: true });
+  return workspaceDir;
+}
+
 // --- Read Tool ---
 
 const ReadParams = Type.Object({
@@ -30,38 +56,40 @@ const ReadParams = Type.Object({
   limit: Type.Optional(Type.Number({ description: 'Maximum number of lines to read' })),
 });
 
-export const readTool: AgentTool<typeof ReadParams> = {
-  name: 'read',
-  label: 'Read File',
-  description: 'Read file contents. Returns the file content with line numbers.',
-  parameters: ReadParams,
-  async execute(_toolCallId, params) {
-    try {
-      const filePath = resolve(params.path);
-      if (!existsSync(filePath)) {
-        return errorResult(`File not found: ${filePath}`);
+export function createReadTool(getContext: WorkspaceContextProvider): AgentTool<typeof ReadParams> {
+  return {
+    name: 'read',
+    label: 'Read File',
+    description: 'Read file contents. Returns the file content with line numbers.',
+    parameters: ReadParams,
+    async execute(_toolCallId, params) {
+      try {
+        const filePath = resolveWorkspacePath(params.path, getContext());
+        if (!existsSync(filePath)) {
+          return errorResult(`File not found: ${filePath}`);
+        }
+        const stat = statSync(filePath);
+        if (stat.isDirectory()) {
+          return errorResult(`Path is a directory: ${filePath}`);
+        }
+        const content = readFileSync(filePath, 'utf-8');
+        const lines = content.split('\n');
+
+        const offset = (params.offset ?? 1) - 1;
+        const limit = params.limit ?? lines.length;
+        const slice = lines.slice(offset, offset + limit);
+
+        const numbered = slice
+          .map((line, i) => `${String(offset + i + 1).padStart(6)} | ${line}`)
+          .join('\n');
+
+        return textResult(numbered);
+      } catch (err: any) {
+        return errorResult(err.message);
       }
-      const stat = statSync(filePath);
-      if (stat.isDirectory()) {
-        return errorResult(`Path is a directory: ${filePath}`);
-      }
-      const content = readFileSync(filePath, 'utf-8');
-      const lines = content.split('\n');
-
-      const offset = (params.offset ?? 1) - 1;
-      const limit = params.limit ?? lines.length;
-      const slice = lines.slice(offset, offset + limit);
-
-      const numbered = slice
-        .map((line, i) => `${String(offset + i + 1).padStart(6)} | ${line}`)
-        .join('\n');
-
-      return textResult(numbered);
-    } catch (err: any) {
-      return errorResult(err.message);
-    }
-  },
-};
+    },
+  };
+}
 
 // --- Write Tool ---
 
@@ -70,22 +98,24 @@ const WriteParams = Type.Object({
   content: Type.String({ description: 'Content to write to the file' }),
 });
 
-export const writeTool: AgentTool<typeof WriteParams> = {
-  name: 'write',
-  label: 'Write File',
-  description: 'Write content to a file. Creates the file and parent directories if they do not exist. Overwrites existing content.',
-  parameters: WriteParams,
-  async execute(_toolCallId, params) {
-    try {
-      const filePath = resolve(params.path);
-      mkdirSync(dirname(filePath), { recursive: true });
-      writeFileSync(filePath, params.content, 'utf-8');
-      return textResult(`Successfully wrote ${params.content.length} characters to ${filePath}`);
-    } catch (err: any) {
-      return errorResult(err.message);
-    }
-  },
-};
+export function createWriteTool(getContext: WorkspaceContextProvider): AgentTool<typeof WriteParams> {
+  return {
+    name: 'write',
+    label: 'Write File',
+    description: 'Write content to a file. Creates the file and parent directories if they do not exist. Overwrites existing content.',
+    parameters: WriteParams,
+    async execute(_toolCallId, params) {
+      try {
+        const filePath = resolveWorkspacePath(params.path, getContext());
+        mkdirSync(dirname(filePath), { recursive: true });
+        writeFileSync(filePath, params.content, 'utf-8');
+        return textResult(`Successfully wrote ${params.content.length} characters to ${filePath}`);
+      } catch (err: any) {
+        return errorResult(err.message);
+      }
+    },
+  };
+}
 
 // --- Edit Tool ---
 
@@ -95,35 +125,37 @@ const EditParams = Type.Object({
   replace: Type.String({ description: 'String to replace the search match with' }),
 });
 
-export const editTool: AgentTool<typeof EditParams> = {
-  name: 'edit',
-  label: 'Edit File',
-  description: 'Edit a file by replacing an exact string match. The search string must appear exactly once in the file.',
-  parameters: EditParams,
-  async execute(_toolCallId, params) {
-    try {
-      const filePath = resolve(params.path);
-      if (!existsSync(filePath)) {
-        return errorResult(`File not found: ${filePath}`);
-      }
-      const content = readFileSync(filePath, 'utf-8');
-      const count = content.split(params.search).length - 1;
+export function createEditTool(getContext: WorkspaceContextProvider): AgentTool<typeof EditParams> {
+  return {
+    name: 'edit',
+    label: 'Edit File',
+    description: 'Edit a file by replacing an exact string match. The search string must appear exactly once in the file.',
+    parameters: EditParams,
+    async execute(_toolCallId, params) {
+      try {
+        const filePath = resolveWorkspacePath(params.path, getContext());
+        if (!existsSync(filePath)) {
+          return errorResult(`File not found: ${filePath}`);
+        }
+        const content = readFileSync(filePath, 'utf-8');
+        const count = content.split(params.search).length - 1;
 
-      if (count === 0) {
-        return errorResult('Search string not found in file');
-      }
-      if (count > 1) {
-        return errorResult(`Search string found ${count} times — must be unique. Provide more context.`);
-      }
+        if (count === 0) {
+          return errorResult('Search string not found in file');
+        }
+        if (count > 1) {
+          return errorResult(`Search string found ${count} times — must be unique. Provide more context.`);
+        }
 
-      const newContent = content.replace(params.search, params.replace);
-      writeFileSync(filePath, newContent, 'utf-8');
-      return textResult(`Successfully edited ${filePath}`);
-    } catch (err: any) {
-      return errorResult(err.message);
-    }
-  },
-};
+        const newContent = content.replace(params.search, params.replace);
+        writeFileSync(filePath, newContent, 'utf-8');
+        return textResult(`Successfully edited ${filePath}`);
+      } catch (err: any) {
+        return errorResult(err.message);
+      }
+    },
+  };
+}
 
 // --- Bash Tool ---
 
@@ -132,23 +164,26 @@ const BashParams = Type.Object({
   timeout: Type.Optional(Type.Number({ description: 'Timeout in milliseconds (default: 120000)' })),
 });
 
-export const bashTool: AgentTool<typeof BashParams> = {
-  name: 'bash',
-  label: 'Run Command',
-  description: 'Execute a shell command and return its output (stdout + stderr combined).',
-  parameters: BashParams,
-  async execute(_toolCallId, params, signal) {
-    const timeoutMs = params.timeout ?? 120000;
+export function createBashTool(getContext: WorkspaceContextProvider): AgentTool<typeof BashParams> {
+  return {
+    name: 'bash',
+    label: 'Run Command',
+    description: 'Execute a shell command and return its output (stdout + stderr combined).',
+    parameters: BashParams,
+    async execute(_toolCallId, params, signal) {
+      const timeoutMs = params.timeout ?? 120000;
+      const cwd = getWorkspaceCwd(getContext());
 
-    return new Promise((resolvePromise) => {
-      const isWindows = process.platform === 'win32';
-      const shell = isWindows ? 'cmd.exe' : '/bin/bash';
-      const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
+      return new Promise((resolvePromise) => {
+        const isWindows = process.platform === 'win32';
+        const shell = isWindows ? 'cmd.exe' : '/bin/bash';
+        const shellArgs = isWindows ? ['/c', params.command] : ['-c', params.command];
 
-      const child = spawn(shell, shellArgs, {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env },
-      });
+        const child = spawn(shell, shellArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+          cwd,
+        });
 
       let output = '';
       let settled = false;
@@ -201,6 +236,7 @@ export const bashTool: AgentTool<typeof BashParams> = {
       child.on('error', (err) => {
         settle(errorResult(err.message));
       });
-    });
-  },
-};
+      });
+    },
+  };
+}

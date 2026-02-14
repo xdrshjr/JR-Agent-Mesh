@@ -2,6 +2,7 @@ import { Agent } from '@mariozechner/pi-agent-core';
 import type { AgentTool, AgentEvent, AgentMessage } from '@mariozechner/pi-agent-core';
 import {
   streamSimple,
+  completeSimple,
   getModel,
   getModels,
   type Model,
@@ -12,6 +13,7 @@ import {
   type TextContent,
   type ThinkingContent,
   type ToolCall,
+  type Context,
 } from '@mariozechner/pi-ai';
 import { v4 as uuidv4 } from 'uuid';
 import { eq, asc } from 'drizzle-orm';
@@ -36,7 +38,7 @@ import type {
   TokenUsage,
   ToolCallRecord,
 } from '../../shared/types.js';
-import { readTool, writeTool, editTool, bashTool } from './tools/builtin-tools.js';
+import { createReadTool, createWriteTool, createEditTool, createBashTool } from './tools/builtin-tools.js';
 import { createFileTransferTool, createAgentDispatchTool } from './tools/custom-tools.js';
 import type { AgentProcessManager } from './agent-process-manager.js';
 import type { FileTransferService } from './file-transfer.js';
@@ -278,11 +280,16 @@ export class SelfAgentService {
   }
 
   private buildTools(includeDispatch: boolean): AgentTool<any>[] {
+    const getWorkspaceContext = () => ({
+      conversationId: this.currentConversationId ?? undefined,
+      dataDir: this.dataDir,
+    });
+
     const tools: AgentTool<any>[] = [
-      readTool,
-      writeTool,
-      editTool,
-      bashTool,
+      createReadTool(getWorkspaceContext),
+      createWriteTool(getWorkspaceContext),
+      createEditTool(getWorkspaceContext),
+      createBashTool(getWorkspaceContext),
       createFileTransferTool(this.fileTransferService, () => ({
         conversationId: this.currentConversationId ?? undefined,
         messageId: this.currentMessageId ?? undefined,
@@ -290,10 +297,7 @@ export class SelfAgentService {
     ];
 
     if (includeDispatch) {
-      tools.push(createAgentDispatchTool(this.agentProcessManager, this.skillManagementService, () => ({
-        conversationId: this.currentConversationId ?? undefined,
-        dataDir: this.dataDir,
-      })));
+      tools.push(createAgentDispatchTool(this.agentProcessManager, this.skillManagementService, getWorkspaceContext));
     }
 
     return tools;
@@ -1120,6 +1124,159 @@ export class SelfAgentService {
 
   getAgentState() {
     return this.agent.state;
+  }
+
+  // --- Skill Generation ---
+
+  private static SKILL_GENERATION_SYSTEM_PROMPT = `You are a skill extraction specialist. Your job is to analyze a conversation between a user and an AI assistant and extract a reusable skill document.
+
+A "skill" is a structured methodology guide that captures HOW to accomplish a type of task — not a transcript of a specific conversation. It should be general enough to apply to similar future tasks.
+
+Output format:
+1. Start with YAML frontmatter delimited by --- lines containing:
+   - name: A short, descriptive skill name (3-8 words, imperative form like "Debug React Component Errors")
+   - description: A one-sentence summary of what this skill helps with
+
+2. Follow with structured markdown sections:
+   - ## When to Use — Describe the situations/triggers when this skill applies
+   - ## Approach — Step-by-step methodology (numbered list)
+   - ## Key Patterns — Important patterns, heuristics, or decision points discovered
+   - ## Tools & Commands — Specific tools, commands, or APIs used (with examples)
+   - ## Common Pitfalls — Mistakes to avoid or edge cases to watch for
+
+Focus on extracting generalizable methodology, not conversation-specific details. If the conversation is about fixing a specific bug, the skill should be about the debugging approach used, not the specific bug.
+
+Keep the skill concise — aim for 300-800 words in the body.`;
+
+  private buildConversationTranscript(messages: Array<{
+    role: string;
+    content: string | null;
+    toolCalls?: Array<{ tool: string; args: any; result?: string; success: boolean; duration: number }> | null;
+  }>): string {
+    const turns: string[] = [];
+
+    for (const msg of messages) {
+      if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+
+      const role = msg.role === 'user' ? 'User' : 'Assistant';
+      const parts: string[] = [];
+
+      // Text content (truncated)
+      if (msg.content) {
+        const text = msg.content.length > 1000
+          ? msg.content.substring(0, 1000) + '... [truncated]'
+          : msg.content;
+        parts.push(text);
+      }
+
+      // Tool calls
+      if (msg.toolCalls && msg.toolCalls.length > 0) {
+        for (const tc of msg.toolCalls) {
+          const status = tc.success ? 'SUCCESS' : 'FAILED';
+          const duration = tc.duration ? ` (${tc.duration}ms)` : '';
+          let args = '';
+          try {
+            args = tc.args ? JSON.stringify(tc.args).substring(0, 300) : '';
+          } catch { /* ignore stringify errors */ }
+          const result = tc.result
+            ? tc.result.substring(0, 200)
+            : '';
+          parts.push(`[Tool: ${tc.tool}] ${status}${duration}\n  Args: ${args}\n  Result: ${result}`);
+        }
+      }
+
+      if (parts.length > 0) {
+        turns.push(`### ${role}\n${parts.join('\n')}`);
+      }
+    }
+
+    let transcript = turns.join('\n\n');
+
+    // Global truncation: if too long, keep first 2 + last 3 turns
+    if (transcript.length > 30000 && turns.length > 5) {
+      const kept = [
+        ...turns.slice(0, 2),
+        '\n--- [middle of conversation omitted for brevity] ---\n',
+        ...turns.slice(-3),
+      ];
+      transcript = kept.join('\n\n');
+    }
+
+    return transcript;
+  }
+
+  private parseSkillResponse(response: string): { name: string; description: string; content: string } {
+    // Match frontmatter anywhere in the response (LLMs may prefix with text)
+    const frontmatterMatch = response.match(/---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+
+    if (!frontmatterMatch) {
+      return {
+        name: 'Untitled Skill',
+        description: '',
+        content: response.trim(),
+      };
+    }
+
+    const frontmatter = frontmatterMatch[1];
+    const content = frontmatterMatch[2].trim();
+
+    // Extract name and description from YAML frontmatter
+    const nameMatch = frontmatter.match(/^name:\s*(.+)$/m);
+    const descMatch = frontmatter.match(/^description:\s*(.+)$/m);
+
+    return {
+      name: nameMatch ? nameMatch[1].trim().replace(/^["']|["']$/g, '') : 'Untitled Skill',
+      description: descMatch ? descMatch[1].trim().replace(/^["']|["']$/g, '') : '',
+      content,
+    };
+  }
+
+  async generateSkillDraft(messages: Array<{
+    role: string;
+    content: string | null;
+    toolCalls?: Array<{ tool: string; args: any; result?: string; success: boolean; duration: number }> | null;
+  }>): Promise<{ name: string; description: string; content: string }> {
+    // Build conversation transcript
+    const transcript = this.buildConversationTranscript(messages);
+
+    // Get current model and API key
+    const { provider, modelId } = this.loadSettings();
+    const model = this.resolveModel(provider, modelId);
+    const apiKey = this.getApiKeyForProvider(model.provider);
+
+    if (!apiKey) {
+      throw new Error(`No API key available for provider: ${model.provider}`);
+    }
+
+    // Build context for one-shot LLM call
+    const context: Context = {
+      systemPrompt: SelfAgentService.SKILL_GENERATION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Analyze the following conversation and extract a reusable skill document:\n\n${transcript}`,
+          timestamp: Date.now(),
+        } as UserMessage,
+      ],
+    };
+
+    // Make the LLM call
+    const response = await completeSimple(model, context, {
+      apiKey,
+      maxTokens: 4096,
+    });
+
+    // Extract text from response
+    const textParts = response.content
+      .filter((c): c is TextContent => c.type === 'text')
+      .map((c) => c.text);
+    const responseText = textParts.join('');
+
+    if (!responseText) {
+      throw new Error('LLM returned empty response');
+    }
+
+    return this.parseSkillResponse(responseText);
   }
 
   // --- Cleanup ---

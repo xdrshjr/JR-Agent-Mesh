@@ -691,19 +691,38 @@ export function createExpressApp(options: ExpressAppOptions) {
           return;
         }
 
-        // Build conversation summary
-        const summary = messages
+        // Prepare messages with tool calls for skill generation
+        // Note: messageRepo.listByConversation() already JSON-parses toolCalls
+        const preparedMessages = messages
           .filter((m: any) => m.role === 'user' || m.role === 'assistant')
-          .map((m: any) => {
+          .map((m: any) => ({
+            role: m.role as string,
+            content: m.content as string | null,
+            toolCalls: m.toolCalls ?? null,
+          }));
+
+        // Try LLM-powered generation if selfAgentService is available
+        if (selfAgentService) {
+          try {
+            const draft = await selfAgentService.generateSkillDraft(preparedMessages);
+            res.json({ draft });
+            return;
+          } catch (llmError: any) {
+            logger.warn('REST', 'LLM skill generation failed, falling back', llmError.message);
+            // Fall through to simple extraction
+          }
+        }
+
+        // Fallback: simple text extraction
+        const summary = preparedMessages
+          .map((m) => {
             const role = m.role === 'user' ? 'User' : 'Assistant';
             const content = m.content || '';
             return `${role}: ${content.substring(0, 500)}`;
           })
           .join('\n\n');
 
-        // For now, generate a simple draft without calling AI
-        // This avoids complexity of creating a separate agent session
-        const firstUserMsg = messages.find((m: any) => m.role === 'user');
+        const firstUserMsg = preparedMessages.find((m) => m.role === 'user');
         const topic = firstUserMsg?.content?.substring(0, 100) || 'General Knowledge';
 
         const draft = {
