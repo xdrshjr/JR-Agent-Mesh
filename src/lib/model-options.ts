@@ -47,6 +47,6 @@ export const MODELS: Record<string, { id: string; name: string }[]> = {
 export type CustomApiMode = 'openai' | 'anthropic';
 
 export const CUSTOM_API_MODES: { id: CustomApiMode; name: string; description: string }[] = [
-  { id: 'openai', name: 'OpenAI 兼容', description: '标准 OpenAI 兼容 API（如 vLLM、Ollama、LiteLLM）' },
-  { id: 'anthropic', name: 'Anthropic 兼容', description: 'Anthropic Messages API（如 Anthropic 代理、AWS Bedrock 代理）' },
+  { id: 'openai', name: 'OpenAI Compatible', description: 'Standard OpenAI-compatible API (e.g. vLLM, Ollama, LiteLLM)' },
+  { id: 'anthropic', name: 'Anthropic Compatible', description: 'Anthropic Messages API (e.g. Anthropic proxy, AWS Bedrock proxy)' },
 ];

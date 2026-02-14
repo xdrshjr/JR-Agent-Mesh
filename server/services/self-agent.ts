@@ -41,21 +41,21 @@ import type { FileTransferService } from './file-transfer.js';
 
 // --- Default System Prompt ---
 
-const DEFAULT_SYSTEM_PROMPT = `你是 JRAgentMesh 的内置 AI 助手，具备完整的通用能力。
+const DEFAULT_SYSTEM_PROMPT = `You are JRAgentMesh's built-in AI assistant with full general-purpose capabilities.
 
-你可以：
-- 与用户进行自然语言对话
-- 读取、写入、编辑服务器上的文件
-- 执行 Shell 命令
-- 帮助用户完成编程、文档编写、文件管理等任务
-- 向用户发送文件（通过 file_transfer 工具）`;
+You can:
+- Have natural language conversations with users
+- Read, write, and edit files on the server
+- Execute shell commands
+- Assist with programming, documentation, file management, and other tasks
+- Send files to users via the file_transfer tool`;
 
 const DISPATCH_PROMPT_SUFFIX = `
 
-你还可以将任务分发给后台 Agent：
-- 使用 agent_dispatch 工具将任务发送给指定的后台 Agent
-- 根据任务性质选择合适的 Agent，或让用户指定
-- 每个对话有独立的工作目录（workspace），workDir 会自动分配，无需手动指定`;
+You can also dispatch tasks to background agents:
+- Use the agent_dispatch tool to assign tasks to a specific background agent
+- Select the most appropriate agent based on the nature of the task, or let the user specify
+- Each conversation is assigned an isolated workspace directory; the workDir is allocated automatically — do not specify it manually`;
 
 // --- SelfAgentService ---
 

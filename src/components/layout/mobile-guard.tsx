@@ -24,10 +24,10 @@ export function MobileGuard({ children }: { children: React.ReactNode }) {
           <div className="text-4xl font-semibold text-[var(--foreground)] mb-2">JRAgentMesh</div>
           <Monitor className="w-16 h-16 mx-auto my-8 text-[var(--text-muted)]" />
           <p className="text-base font-medium text-[var(--foreground)] mb-2">
-            请使用桌面设备访问
+            Desktop Required
           </p>
           <p className="text-sm text-[var(--text-secondary)]">
-            JRAgentMesh 暂不支持移动设备。请在电脑上打开此页面。
+            JRAgentMesh does not support mobile devices. Please open this page on a desktop computer.
           </p>
         </div>
       </div>
