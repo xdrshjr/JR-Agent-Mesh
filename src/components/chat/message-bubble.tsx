@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils';
 import { MarkdownRenderer } from './markdown-renderer';
 import { ToolTimeline } from './tool-timeline';
+import { ThinkingBlock } from './thinking-block';
 import { FileAttachment } from './file-attachment';
 import { groupContentBlocks } from '@/lib/content-blocks';
 import type { Message } from '@/lib/types';
@@ -53,28 +54,22 @@ export function MessageBubble({ message }: MessageBubbleProps) {
               : 'bg-white',
           )}
         >
-          {/* Thinking (collapsible) */}
-          {message.thinking && (
-            <details className="mb-2">
-              <summary className="text-xs text-[var(--text-muted)] cursor-pointer hover:text-[var(--text-secondary)]">
-                Thinking...
-              </summary>
-              <div className="mt-1 pl-3 border-l-2 border-[var(--border)] text-xs text-[var(--text-secondary)] italic">
-                {message.thinking}
-              </div>
-            </details>
-          )}
-
-          {/* Content + Tool Timeline (interleaved) */}
+          {/* Content + Tool Timeline + Thinking (interleaved) */}
           {message.contentBlocks && message.contentBlocks.length > 0 ? (
             groupContentBlocks(message.contentBlocks, message.toolCalls || [])
               .map((group, i) =>
                 group.type === 'text'
                   ? <MarkdownRenderer key={`text-${i}`} content={group.text} />
-                  : <ToolTimeline key={`tools-${i}`} toolCalls={group.toolCalls} />
+                  : group.type === 'thinking'
+                    ? <ThinkingBlock key={`thinking-${i}`} text={group.text} />
+                    : <ToolTimeline key={`tools-${i}`} toolCalls={group.toolCalls} />
               )
           ) : (
             <>
+              {/* Fallback for old messages without contentBlocks */}
+              {message.thinking && (
+                <ThinkingBlock text={message.thinking} />
+              )}
               {message.content && (
                 <MarkdownRenderer content={message.content} />
               )}

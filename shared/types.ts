@@ -47,7 +47,8 @@ export interface Attachment {
 
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; toolCallId: string };
+  | { type: 'tool_use'; toolCallId: string }
+  | { type: 'thinking'; text: string };
 
 export interface TokenUsage {
   inputTokens: number;
@@ -210,6 +211,11 @@ export interface ChatThinkingDeltaPayload {
   delta: string;
 }
 
+export interface ChatThinkingBlockStartPayload {
+  conversationId: string;
+  messageId: string;
+}
+
 export interface ChatToolStartPayload {
   conversationId: string;
   messageId: string;
@@ -362,6 +368,7 @@ export type ServerMessageType =
   | 'init'
   | 'chat.stream_delta'
   | 'chat.thinking_delta'
+  | 'chat.thinking_block_start'
   | 'chat.tool_start'
   | 'chat.tool_end'
   | 'chat.message_complete'

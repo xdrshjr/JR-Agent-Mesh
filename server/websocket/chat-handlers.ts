@@ -99,6 +99,7 @@ export function registerChatHandlers(selfAgent: SelfAgentService) {
         content: msg.content,
         thinking: msg.thinking,
         toolCalls: msg.toolCalls ? JSON.parse(msg.toolCalls) : null,
+        contentBlocks: msg.contentBlocks ? JSON.parse(msg.contentBlocks) : null,
         attachments: msg.attachments ? JSON.parse(msg.attachments) : null,
         tokenUsage: msg.tokenUsage ? JSON.parse(msg.tokenUsage) : null,
         createdAt: msg.createdAt,

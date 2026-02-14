@@ -17,6 +17,7 @@ export type {
   InitPayload,
   ChatStreamDeltaPayload,
   ChatThinkingDeltaPayload,
+  ChatThinkingBlockStartPayload,
   ChatToolStartPayload,
   ChatToolEndPayload,
   ChatMessageCompletePayload,

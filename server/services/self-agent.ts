@@ -24,9 +24,11 @@ import { logger } from '../utils/logger.js';
 import type {
   ServerMessageType,
   Conversation,
+  ContentBlock,
   ChatConversationUpdatedPayload,
   ChatStreamDeltaPayload,
   ChatThinkingDeltaPayload,
+  ChatThinkingBlockStartPayload,
   ChatToolStartPayload,
   ChatToolEndPayload,
   ChatMessageCompletePayload,
@@ -351,7 +353,12 @@ export class SelfAgentService {
 
         const aEvent = event.assistantMessageEvent;
 
-        if (aEvent.type === 'text_delta') {
+        if (aEvent.type === 'thinking_start') {
+          this.broadcast<ChatThinkingBlockStartPayload>('chat.thinking_block_start', {
+            conversationId,
+            messageId,
+          });
+        } else if (aEvent.type === 'text_delta') {
           this.broadcast<ChatStreamDeltaPayload>('chat.stream_delta', {
             conversationId,
             messageId,
@@ -1020,6 +1027,16 @@ export class SelfAgentService {
               }
             : null;
 
+          // Build interleaved contentBlocks preserving order from assistant message
+          const contentBlocks: ContentBlock[] = assistantMsg.content
+            .map((c): ContentBlock | null => {
+              if (c.type === 'text') return { type: 'text', text: (c as TextContent).text };
+              if (c.type === 'thinking') return { type: 'thinking', text: (c as ThinkingContent).thinking };
+              if (c.type === 'toolCall') return { type: 'tool_use', toolCallId: (c as ToolCall).id };
+              return null;
+            })
+            .filter((b): b is ContentBlock => b !== null);
+
           db.insert(schema.messages).values({
             id: msgId,
             conversationId,
@@ -1027,6 +1044,7 @@ export class SelfAgentService {
             content: text,
             thinking,
             toolCalls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
+            contentBlocks: contentBlocks.length > 0 ? JSON.stringify(contentBlocks) : null,
             attachments: null,
             tokenUsage: usage ? JSON.stringify(usage) : null,
             createdAt: assistantMsg.timestamp || Date.now(),

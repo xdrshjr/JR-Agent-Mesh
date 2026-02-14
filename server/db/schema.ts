@@ -21,6 +21,7 @@ export const messages = sqliteTable('messages', {
   content: text('content'),
   thinking: text('thinking'),
   toolCalls: text('tool_calls'),     // JSON string
+  contentBlocks: text('content_blocks'), // JSON string — interleaved text/thinking/tool_use blocks
   attachments: text('attachments'),   // JSON string
   tokenUsage: text('token_usage'),    // JSON string
   createdAt: integer('created_at').notNull(),

@@ -9,6 +9,7 @@ import type {
   InitPayload,
   ChatStreamDeltaPayload,
   ChatThinkingDeltaPayload,
+  ChatThinkingBlockStartPayload,
   ChatToolStartPayload,
   ChatToolEndPayload,
   ChatMessageCompletePayload,
@@ -104,6 +105,15 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
         store.startStreaming(data.messageId, data.conversationId);
       }
       store.appendStreamDelta(data.delta);
+    });
+
+    client.on('chat.thinking_block_start', (payload) => {
+      const data = payload as ChatThinkingBlockStartPayload;
+      const store = useChatStore.getState();
+      if (!store.streamingMessage) {
+        store.startStreaming(data.messageId, data.conversationId);
+      }
+      store.startThinkingBlock();
     });
 
     client.on('chat.thinking_delta', (payload) => {

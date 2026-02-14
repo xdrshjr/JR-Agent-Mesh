@@ -2,7 +2,8 @@ import type { ContentBlock, ToolCallRecord } from '@/lib/types';
 
 export type ContentGroup =
   | { type: 'text'; text: string }
-  | { type: 'tools'; toolCalls: ToolCallRecord[] };
+  | { type: 'tools'; toolCalls: ToolCallRecord[] }
+  | { type: 'thinking'; text: string };
 
 export function groupContentBlocks(
   blocks: ContentBlock[],
@@ -17,6 +18,13 @@ export function groupContentBlocks(
         last.text += block.text;
       } else {
         groups.push({ type: 'text', text: block.text });
+      }
+    } else if (block.type === 'thinking') {
+      const last = groups[groups.length - 1];
+      if (last && last.type === 'thinking') {
+        last.text += block.text;
+      } else {
+        groups.push({ type: 'thinking', text: block.text });
       }
     } else {
       const tc = toolCalls.find((t) => t.id === block.toolCallId);

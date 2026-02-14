@@ -34,6 +34,9 @@ export function initDatabase(dbPath: string) {
   // Create tables if they don't exist
   createTables(sqlite);
 
+  // Run schema migrations for existing databases
+  migrateSchema(sqlite);
+
   // Seed default settings
   seedDefaults(sqlite);
 
@@ -61,6 +64,7 @@ function createTables(sqlite: Database.Database) {
       content TEXT,
       thinking TEXT,
       tool_calls TEXT,
+      content_blocks TEXT,
       attachments TEXT,
       token_usage TEXT,
       created_at INTEGER NOT NULL,
@@ -155,6 +159,16 @@ function createTables(sqlite: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_skill_activations_conversation ON skill_activations(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_skill_activations_skill ON skill_activations(skill_id);
   `);
+}
+
+function migrateSchema(sqlite: Database.Database) {
+  // Add content_blocks column to messages table if it doesn't exist
+  const columns = sqlite.pragma('table_info(messages)') as Array<{ name: string }>;
+  const hasContentBlocks = columns.some((c) => c.name === 'content_blocks');
+  if (!hasContentBlocks) {
+    sqlite.exec('ALTER TABLE messages ADD COLUMN content_blocks TEXT');
+    logger.info('DB', 'Added content_blocks column to messages table');
+  }
 }
 
 function seedDefaults(sqlite: Database.Database) {

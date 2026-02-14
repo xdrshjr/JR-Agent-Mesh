@@ -54,6 +54,7 @@ interface ChatState {
   // Streaming
   startStreaming: (messageId: string, conversationId: string) => void;
   appendStreamDelta: (delta: string) => void;
+  startThinkingBlock: () => void;
   appendThinkingDelta: (delta: string) => void;
   addToolCallStart: (toolCall: ToolCallRecord) => void;
   updateToolCallEnd: (toolCallId: string, result: string | undefined, success: boolean, duration: number) => void;
@@ -140,12 +141,38 @@ export const useChatStore = create<ChatState>((set, get) => ({
       };
     }),
 
-  appendThinkingDelta: (delta) =>
+  startThinkingBlock: () =>
     set((s) => {
       if (!s.streamingMessage) return s;
       return {
         streamingMessage: {
           ...s.streamingMessage,
+          contentBlocks: [...s.streamingMessage.contentBlocks, { type: 'thinking' as const, text: '' }],
+        },
+      };
+    }),
+
+  appendThinkingDelta: (delta) =>
+    set((s) => {
+      if (!s.streamingMessage) return s;
+      const blocks = [...s.streamingMessage.contentBlocks];
+      // Find the last thinking block and append to it
+      let found = false;
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'thinking') {
+          blocks[i] = { type: 'thinking', text: (blocks[i] as { type: 'thinking'; text: string }).text + delta };
+          found = true;
+          break;
+        }
+      }
+      // Auto-create a thinking block if none exists (e.g. thinking_start wasn't emitted)
+      if (!found) {
+        blocks.push({ type: 'thinking' as const, text: delta });
+      }
+      return {
+        streamingMessage: {
+          ...s.streamingMessage,
+          contentBlocks: blocks,
           thinking: s.streamingMessage.thinking + delta,
         },
       };
