@@ -57,6 +57,23 @@ registerAgentType({
 
 TUI agents (opencode, codex) use xterm.js terminal; others use a parsed output area. This is controlled by `TUI_AGENT_TYPES` in `src/components/agents/agent-detail-panel.tsx`. Agent output is parsed by `ClaudeCodeParser` or `GenericCLIParser` in `server/services/parsers/`.
 
+### Skill System
+
+Reusable AI knowledge documents injected into the self-agent's system prompt. Two sources:
+
+- **`git`** — Cloned from GitHub repos, stored in `data/skills/installed/`
+- **`conversation`** — Generated from chat conversations via LLM extraction, stored in `data/skills/custom/`
+
+Two activation levels: **global** (active for all conversations) and **session** (active for a specific conversation only, via `skillActivations` table).
+
+Key files: `server/services/skill-management.ts` (core service), `server/db/repositories/skill-repository.ts` (DB layer), `src/stores/skill-store.ts` (frontend store), `src/components/settings/skill-management-panel.tsx` (management UI), `src/components/chat/save-skill-dialog.tsx` (generation UI).
+
+Active skills are injected into the system prompt wrapped in `<skill name="...">content</skill>` tags (max 50,000 chars total). For agent dispatch, skills are prepended as markdown (max 30,000 chars).
+
+### Workspace Isolation
+
+Every conversation gets its own workspace directory at `{dataDir}/workspaces/{conversationId}/`. Auto-created on first file operation. Relative paths in self-agent tools resolve to this directory. Dispatched agents for the same conversation share the workspace.
+
 ### Adding Self-Agent Tools
 
 Built-in tools are in `server/services/tools/builtin-tools.ts`, custom tools in `server/services/tools/custom-tools.ts`. Tool structure:
@@ -121,6 +138,28 @@ Tables: `conversations`, `messages`, `agentProcesses`, `agentOutputs`, `credenti
 
 DB file location: `./data/jragentmesh.db`. A cleanup job runs hourly (expired file transfers, agent outputs >30 days, SQLite VACUUM).
 
+**Conventions:** All IDs are `text` (UUIDs). Timestamps are `integer` (Unix milliseconds, not seconds). JSON fields are stored as `text` with manual parse/stringify. Foreign keys use `onDelete: 'cascade'`.
+
+### Self-Agent Error Recovery
+
+- **Watchdog**: `agent.prompt()` is wrapped with a 60-second idle timeout. If no events are received within 60s, the call is aborted to prevent permanent hangs.
+- **Pre-flight validation**: `validateModelConfig()` checks API key and baseUrl before calling the LLM, providing clear error messages for missing credentials.
+- **pi-agent-core patch**: The postinstall patch wraps the agent loop with `.catch()` to push `agent_end` events on error, preventing silent promise hangs.
+
+### Styling Convention
+
+Components use CSS custom properties from `src/app/globals.css`, not raw Tailwind colors:
+
+```tsx
+className="bg-[var(--surface)] border-[var(--border)] text-[var(--text-primary)]"
+```
+
+Key variables: `--primary`, `--surface`, `--background`, `--border`, `--text-primary`, `--text-secondary`, `--text-muted`, `--error`, `--warning`, `--success`, `--radius` (8px).
+
+### Content Block Rendering
+
+Chat messages support interleaved content blocks (text, thinking, tool_use) via the `contentBlocks` array. Blocks are grouped for display by `groupContentBlocks()` in `src/lib/content-blocks.ts`. Falls back to legacy format (separate `content`, `thinking`, `toolCalls` fields) for older messages. Thinking blocks are collapsible by default.
+
 ### Path Aliases
 
 ```
@@ -151,7 +190,7 @@ DB file location: `./data/jragentmesh.db`. A cleanup job runs hourly (expired fi
 This project has a pre-generated index for quick codebase understanding.
 
 - **Location:** `.claude-index/index.md`
-- **Last Updated:** 2026-02-14
+- **Last Updated:** 2026-02-15
 - **Contents:** Project overview, feature map, file index, exported symbols, module dependencies
 
 **Usage:** Read `.claude-index/index.md` to quickly understand the project structure before making changes. The index provides a navigation map of the codebase without needing to explore every file.
