@@ -121,7 +121,7 @@ interface SettingsState {
   fetchSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
   fetchCredentials: () => Promise<void>;
-  saveCredential: (key: string, value: string) => Promise<void>;
+  saveCredential: (key: string, value: string, displayName?: string, provider?: string) => Promise<void>;
   deleteCredential: (key: string) => Promise<void>;
   detectModels: (provider: string) => Promise<void>;
 }
@@ -292,7 +292,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     }
   },
 
-  saveCredential: async (key: string, value: string) => {
+  saveCredential: async (key: string, value: string, displayName?: string, provider?: string) => {
     const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
     try {
       const res = await fetch(`/api/credentials/${key}`, {
@@ -300,8 +300,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           value,
-          displayName: credType?.displayName || key,
-          provider: credType?.provider || null,
+          displayName: displayName || credType?.displayName || key,
+          provider: provider ?? credType?.provider ?? null,
         }),
       });
       if (!res.ok) throw new Error('Failed to save credential');

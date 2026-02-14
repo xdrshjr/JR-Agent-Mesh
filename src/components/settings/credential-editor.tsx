@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Pencil, Trash2, ShieldAlert, Key, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Pencil, Trash2, ShieldAlert, Key, Loader2, Plus } from 'lucide-react';
 import {
   useSettingsStore,
   CREDENTIAL_TYPES,
@@ -17,6 +17,29 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { PROVIDER_DEFAULT_URLS } from '@/lib/model-options';
+
+interface CredentialDisplayItem {
+  key: string;
+  displayName: string;
+  provider: string;
+  placeholder: string;
+  description: string;
+  hasValue: boolean;
+  maskedValue: string | null;
+  updatedAt: number | null;
+  isCustom: boolean;
+}
+
+/** Convert a display name to a credential key: "DeepSeek API Key" -> "deepseek_api_key" */
+function toCredentialKey(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+const predefinedKeys = new Set(CREDENTIAL_TYPES.map((t) => t.key));
 
 export function CredentialEditor() {
   const credentials = useSettingsStore((s) => s.credentials);
@@ -36,40 +59,83 @@ export function CredentialEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [testResult, setTestResult] = useState<{ count?: number; error?: string } | null>(null);
 
+  // Add credential dialog state
+  const [addOpen, setAddOpen] = useState(false);
+  const [addDisplayName, setAddDisplayName] = useState('');
+  const [addApiUrl, setAddApiUrl] = useState('');
+  const [addApiKey, setAddApiKey] = useState('');
+  const [addError, setAddError] = useState('');
+  const [isAddSaving, setIsAddSaving] = useState(false);
+
   useEffect(() => {
     fetchCredentials();
   }, [fetchCredentials]);
 
-  // Build display list: merge predefined types with server data
-  const credentialItems = CREDENTIAL_TYPES.map((type) => {
-    const serverCred = credentials.find((c) => c.key === type.key);
-    // Dynamic description for custom_key based on API mode
-    const description = type.key === 'custom_key'
-      ? (customApiMode === 'anthropic'
-        ? 'Used for custom Anthropic-compatible API'
-        : 'Used for custom OpenAI-compatible API')
-      : type.description;
-    return {
-      ...type,
-      description,
-      hasValue: serverCred?.hasValue || false,
-      maskedValue: serverCred?.maskedValue || null,
-      updatedAt: serverCred?.updatedAt || null,
-    };
-  });
+  // Build display list: merge predefined types with custom server credentials
+  const credentialItems = useMemo<CredentialDisplayItem[]>(() => {
+    // Predefined items
+    const predefined = CREDENTIAL_TYPES.map((type) => {
+      const serverCred = credentials.find((c) => c.key === type.key);
+      const description = type.key === 'custom_key'
+        ? (customApiMode === 'anthropic'
+          ? 'Used for custom Anthropic-compatible API'
+          : 'Used for custom OpenAI-compatible API')
+        : type.description;
+      return {
+        ...type,
+        description,
+        hasValue: serverCred?.hasValue || false,
+        maskedValue: serverCred?.maskedValue || null,
+        updatedAt: serverCred?.updatedAt || null,
+        isCustom: false,
+      };
+    });
+
+    // Custom items: server credentials whose key is NOT in predefined
+    const custom = credentials
+      .filter((c) => !predefinedKeys.has(c.key))
+      .map((c) => ({
+        key: c.key,
+        displayName: c.displayName || c.key,
+        provider: c.provider || c.key,
+        placeholder: '',
+        description: 'Custom credential',
+        hasValue: c.hasValue,
+        maskedValue: c.maskedValue || null,
+        updatedAt: c.updatedAt || null,
+        isCustom: true,
+      }));
+
+    return [...predefined, ...custom];
+  }, [credentials, customApiMode]);
+
+  // Track which item is being edited (for the edit dialog)
+  const editingItem = credentialItems.find((t) => t.key === editKey);
+  const editingIsCustom = editingItem?.isCustom ?? false;
+  const editingProvider = editingItem?.provider;
+  const isTesting = editingProvider ? (isDetectingModels[editingProvider] || false) : false;
 
   const handleEdit = (key: string) => {
+    const item = credentialItems.find((t) => t.key === key);
     const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
     setEditKey(key);
     setEditValue('');
-    setEditUrl(credType ? (providerApiUrls[credType.provider] || '') : '');
+    // For predefined items, load from providerApiUrls; for custom items, load from providerApiUrls by provider
+    if (credType) {
+      setEditUrl(providerApiUrls[credType.provider] || '');
+    } else if (item) {
+      setEditUrl(providerApiUrls[item.provider] || '');
+    } else {
+      setEditUrl('');
+    }
     setTestResult(null);
   };
 
   const handleSave = async () => {
     if (!editKey) return;
     const credType = CREDENTIAL_TYPES.find((t) => t.key === editKey);
-    const provider = credType?.provider;
+    const item = credentialItems.find((t) => t.key === editKey);
+    const provider = credType?.provider || item?.provider;
 
     // At least one of URL or key value should be provided to save
     const hasUrlChange = provider && editUrl.trim() !== (providerApiUrls[provider] || '');
@@ -87,7 +153,12 @@ export function CredentialEditor() {
 
       // Save key if provided
       if (hasKeyValue) {
-        await saveCredential(editKey, editValue.trim());
+        if (editingIsCustom && item) {
+          // Pass explicit displayName and provider for custom credentials
+          await saveCredential(editKey, editValue.trim(), item.displayName, item.provider);
+        } else {
+          await saveCredential(editKey, editValue.trim());
+        }
       }
 
       setEditKey(null);
@@ -154,15 +225,59 @@ export function CredentialEditor() {
     }
   };
 
-  const editingItem = credentialItems.find((t) => t.key === editKey);
-  const editingProvider = editingItem?.provider;
-  const isTesting = editingProvider ? (isDetectingModels[editingProvider] || false) : false;
+  // --- Add Credential ---
+  const generatedKey = toCredentialKey(addDisplayName);
+  const isDuplicateKey = generatedKey.length > 0 && credentialItems.some((item) => item.key === generatedKey);
+
+  const resetAddDialog = () => {
+    setAddOpen(false);
+    setAddDisplayName('');
+    setAddApiUrl('');
+    setAddApiKey('');
+    setAddError('');
+  };
+
+  const handleAddSave = async () => {
+    if (!addDisplayName.trim() || !addApiKey.trim() || !generatedKey) return;
+    if (isDuplicateKey) {
+      setAddError(`A credential with key "${generatedKey}" already exists.`);
+      return;
+    }
+
+    const key = generatedKey;
+    const provider = key; // use key as provider for custom credentials
+
+    setIsAddSaving(true);
+    setAddError('');
+    try {
+      // Save URL if provided
+      if (addApiUrl.trim()) {
+        setProviderApiUrl(provider, addApiUrl.trim());
+        await saveSettings();
+      }
+
+      // Save the credential with explicit displayName and provider
+      await saveCredential(key, addApiKey.trim(), addDisplayName.trim(), provider);
+
+      resetAddDialog();
+    } catch {
+      setAddError('Failed to save credential');
+    } finally {
+      setIsAddSaving(false);
+    }
+  };
 
   return (
     <section>
-      <div className="flex items-center gap-2 mb-3">
-        <Key className="w-4 h-4 text-[var(--text-secondary)]" />
-        <h4 className="text-sm font-medium text-[var(--foreground)]">API Credentials</h4>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Key className="w-4 h-4 text-[var(--text-secondary)]" />
+          <h4 className="text-sm font-medium text-[var(--foreground)]">API Credentials</h4>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="w-3 h-3 mr-1" />
+          Add
+        </Button>
       </div>
 
       <div className="space-y-2">
@@ -285,26 +400,103 @@ export function CredentialEditor() {
             )}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={handleTestConnection}
-              disabled={isSaving || isTesting}
-              className="mr-auto"
-            >
-              {isTesting ? (
-                <>
-                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
-                  Testing...
-                </>
-              ) : (
-                'Test Connection'
-              )}
-            </Button>
+            {/* Hide Test Connection for custom (user-added) credentials */}
+            {!editingIsCustom && (
+              <Button
+                variant="outline"
+                onClick={handleTestConnection}
+                disabled={isSaving || isTesting}
+                className="mr-auto"
+              >
+                {isTesting ? (
+                  <>
+                    <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                    Testing...
+                  </>
+                ) : (
+                  'Test Connection'
+                )}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => { setEditKey(null); setTestResult(null); }} disabled={isSaving}>
               Cancel
             </Button>
             <Button onClick={handleSave} disabled={(!editValue.trim() && editUrl.trim() === (editingProvider ? (providerApiUrls[editingProvider] || '') : '')) || isSaving}>
               {isSaving ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Credential Dialog */}
+      <Dialog open={addOpen} onOpenChange={(open) => { if (!open) resetAddDialog(); }}>
+        <DialogContent className="sm:max-w-[440px]">
+          <DialogHeader>
+            <DialogTitle>Add Credential</DialogTitle>
+            <DialogDescription>
+              Add a custom API credential for any provider.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {/* Display Name */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-[var(--text-secondary)]">Display Name</label>
+              <Input
+                type="text"
+                value={addDisplayName}
+                onChange={(e) => { setAddDisplayName(e.target.value); setAddError(''); }}
+                placeholder="e.g., DeepSeek API Key"
+              />
+              {generatedKey && (
+                <p className="text-xs text-[var(--text-muted)]">
+                  Key: <span className="font-mono">{generatedKey}</span>
+                </p>
+              )}
+              {isDuplicateKey && (
+                <p className="text-xs text-[var(--error)]">
+                  A credential with this key already exists.
+                </p>
+              )}
+            </div>
+
+            {/* API URL */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-[var(--text-secondary)]">API URL <span className="text-[var(--text-muted)]">(optional)</span></label>
+              <Input
+                type="text"
+                value={addApiUrl}
+                onChange={(e) => setAddApiUrl(e.target.value)}
+                placeholder="https://api.example.com/v1"
+              />
+            </div>
+
+            {/* API Key */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-[var(--text-secondary)]">API Key</label>
+              <Input
+                type="password"
+                value={addApiKey}
+                onChange={(e) => setAddApiKey(e.target.value)}
+                placeholder="Enter API key..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && addDisplayName.trim() && addApiKey.trim() && !isDuplicateKey) handleAddSave();
+                }}
+              />
+            </div>
+
+            {/* Error */}
+            {addError && (
+              <div className="text-xs px-2 py-1.5 rounded bg-[var(--error)]/10 text-[var(--error)]">
+                {addError}
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={resetAddDialog} disabled={isAddSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddSave} disabled={!addDisplayName.trim() || !addApiKey.trim() || !generatedKey || isDuplicateKey || isAddSaving}>
+              {isAddSaving ? 'Saving...' : 'Save'}
             </Button>
           </DialogFooter>
         </DialogContent>
