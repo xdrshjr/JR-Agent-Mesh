@@ -185,57 +185,57 @@ export function createBashTool(getContext: WorkspaceContextProvider): AgentTool<
           cwd,
         });
 
-      let output = '';
-      let settled = false;
-      const MAX_OUTPUT = 100000;
+        let output = '';
+        let settled = false;
+        const MAX_OUTPUT = 100000;
 
-      const settle = (result: AgentToolResult<undefined>) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolvePromise(result);
-      };
+        const settle = (result: AgentToolResult<undefined>) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolvePromise(result);
+        };
 
-      // Manual timeout since spawn() does not support the timeout option
-      const timer = setTimeout(() => {
-        child.kill('SIGTERM');
-        // Give it a moment to die, then force kill
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
-        }, 2000);
-        settle(errorResult(`Command timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      child.stdout.on('data', (data: Buffer) => {
-        if (output.length < MAX_OUTPUT) {
-          output += data.toString();
-        }
-      });
-
-      child.stderr.on('data', (data: Buffer) => {
-        if (output.length < MAX_OUTPUT) {
-          output += data.toString();
-        }
-      });
-
-      if (signal) {
-        signal.addEventListener('abort', () => {
+        // Manual timeout since spawn() does not support the timeout option
+        const timer = setTimeout(() => {
           child.kill('SIGTERM');
-          settle(errorResult('Command aborted'));
-        }, { once: true });
-      }
+          // Give it a moment to die, then force kill
+          setTimeout(() => {
+            if (!child.killed) child.kill('SIGKILL');
+          }, 2000);
+          settle(errorResult(`Command timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
 
-      child.on('close', (code) => {
-        if (output.length > MAX_OUTPUT) {
-          output = output.slice(0, MAX_OUTPUT) + '\n... [output truncated]';
+        child.stdout.on('data', (data: Buffer) => {
+          if (output.length < MAX_OUTPUT) {
+            output += data.toString();
+          }
+        });
+
+        child.stderr.on('data', (data: Buffer) => {
+          if (output.length < MAX_OUTPUT) {
+            output += data.toString();
+          }
+        });
+
+        if (signal) {
+          signal.addEventListener('abort', () => {
+            child.kill('SIGTERM');
+            settle(errorResult('Command aborted'));
+          }, { once: true });
         }
-        const exitInfo = code !== 0 ? `\n[exit code: ${code}]` : '';
-        settle(textResult((output || '(no output)') + exitInfo));
-      });
 
-      child.on('error', (err) => {
-        settle(errorResult(err.message));
-      });
+        child.on('close', (code) => {
+          if (output.length > MAX_OUTPUT) {
+            output = output.slice(0, MAX_OUTPUT) + '\n... [output truncated]';
+          }
+          const exitInfo = code !== 0 ? `\n[exit code: ${code}]` : '';
+          settle(textResult((output || '(no output)') + exitInfo));
+        });
+
+        child.on('error', (err) => {
+          settle(errorResult(err.message));
+        });
       });
     },
   };
