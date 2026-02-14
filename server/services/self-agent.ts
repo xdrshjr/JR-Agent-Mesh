@@ -210,45 +210,38 @@ export class SelfAgentService {
       return this.buildCustomModel();
     }
 
-    try {
-      // Try exact match from known providers
-      const models = getModels(provider as any);
+    const models = getModels(provider as any);
+    const overrideUrl = this.getProviderApiUrl(provider);
+
+    if (models.length > 0) {
+      // Known pi-ai provider
       const found = models.find((m) => m.id === modelId);
       if (found) {
-        // Apply per-provider API URL override if configured
-        const overrideUrl = this.getProviderApiUrl(provider);
-        if (overrideUrl) {
-          return { ...found, baseUrl: overrideUrl };
-        }
-        return found;
+        return overrideUrl ? { ...found, baseUrl: overrideUrl } : found;
       }
-    } catch {
-      // Provider not recognized as known — try custom credential provider
-      const overrideUrl = this.getProviderApiUrl(provider);
-      if (overrideUrl) {
-        return {
-          id: modelId,
-          name: modelId,
-          api: 'openai-completions',
-          provider,
-          baseUrl: overrideUrl,
-          reasoning: false,
-          input: ['text', 'image'] as ('text' | 'image')[],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 128000,
-          maxTokens: 4096,
-        };
-      }
+      // Model ID not in registry — use user's model ID with the provider's API type
+      const template = models[0];
+      return {
+        ...template,
+        id: modelId,
+        name: modelId,
+        ...(overrideUrl ? { baseUrl: overrideUrl } : {}),
+      };
     }
 
-    // Fallback: try anthropic claude-sonnet-4-5
-    try {
-      return getModel('anthropic', 'claude-sonnet-4-5-20250929' as any);
-    } catch {
-      // Last resort: return first available anthropic model
-      const models = getModels('anthropic');
-      return models[0];
-    }
+    // Unknown/custom credential provider — construct OpenAI-compatible model
+    return {
+      id: modelId,
+      name: modelId,
+      api: 'openai-completions',
+      provider,
+      baseUrl: overrideUrl || '',
+      reasoning: false,
+      input: ['text', 'image'] as ('text' | 'image')[],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128000,
+      maxTokens: 4096,
+    };
   }
 
   private buildCustomModel(): Model<any> {
@@ -598,6 +591,14 @@ export class SelfAgentService {
     if (model.provider === 'custom' && !model.baseUrl) {
       throw new Error(
         'Custom LLM selected but no API URL configured. Please set it in Settings → Custom LLM → API URL.'
+      );
+    }
+
+    // Custom credential providers (not built-in) require a base URL
+    const hasBuiltinModels = getModels(model.provider as any).length > 0;
+    if (!hasBuiltinModels && model.provider !== 'custom' && !model.baseUrl) {
+      throw new Error(
+        `No API URL configured for ${model.provider}. Please set it in Settings → Credentials.`
       );
     }
   }
