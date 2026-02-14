@@ -37,6 +37,44 @@ The custom Express server (`server/index.ts`) hosts both the REST API and Next.j
 - **`server/services/file-transfer.ts`** — File upload/download with temporary download tokens.
 - **`server/utils/crypto.ts`** — AES-256-GCM encryption for credential storage.
 
+### Adding New Agent Types
+
+Register in `server/services/agent-registry.ts` by calling `registerAgentType()` with an `AgentTypeConfig`:
+
+```typescript
+registerAgentType({
+  id: 'new-agent',
+  displayName: 'New Agent',
+  command: 'new-agent-cli',        // CLI executable
+  args: ['--flag'],                // Default arguments
+  envMapping: { API_KEY: 'key' },  // { ENV_VAR: credential_key }
+  inputMode: 'stdin',              // 'stdin' or 'newline'
+  healthCheck: 'new-agent-cli --version',
+  icon: 'icon-name',
+  description: 'Description',
+});
+```
+
+TUI agents (opencode, codex) use xterm.js terminal; others use a parsed output area. This is controlled by `TUI_AGENT_TYPES` in `src/components/agents/agent-detail-panel.tsx`. Agent output is parsed by `ClaudeCodeParser` or `GenericCLIParser` in `server/services/parsers/`.
+
+### Adding Self-Agent Tools
+
+Built-in tools are in `server/services/tools/builtin-tools.ts`, custom tools in `server/services/tools/custom-tools.ts`. Tool structure:
+
+```typescript
+export const myTool: AgentTool<typeof ParamsSchema> = {
+  name: 'tool_name',
+  label: 'Display Label',
+  description: 'Description for LLM',
+  parameters: Type.Object({ /* TypeBox schema */ }),
+  async execute(_toolCallId, params) {
+    return textResult('success') | errorResult('error');
+  }
+};
+```
+
+Tools are registered in `SelfAgentService` constructor. Built-in tools have limits: bash 120s timeout / 100KB output, file upload 50MB per file / 200MB total / 10 files max.
+
 ### WebSocket Protocol
 
 All real-time communication uses a typed WebSocket protocol defined in `shared/types.ts`. Message types are prefixed by domain (`chat.*`, `agent.*`, `system.*`).
@@ -49,6 +87,21 @@ Handler registration is split across:
 - `server/websocket/chat-handlers.ts` — All `chat.*` message handlers
 - `server/websocket/agent-handlers.ts` — All `agent.*` message handlers
 
+**Adding a new WebSocket handler:**
+1. Define payload type and add message type to `ClientMessageType` union in `shared/types.ts`
+2. Call `registerHandler('domain.action', async (ws, payload, requestId?) => { ... })` in the appropriate handler file
+3. Handlers are registered in `server/index.ts` via `registerChatHandlers(selfAgent)` / `registerAgentHandlers(agentProcessManager)`
+
+### REST API
+
+Routes are defined in `server/express-app.ts`. Key endpoints:
+
+- `GET /api/agent-types`, `GET/POST /api/agents`, `POST /api/agents/:id/stop|restart`, `DELETE /api/agents/:id`
+- `GET /api/conversations`, `GET /api/conversations/:id/messages`
+- `POST/GET /api/settings`, `POST/GET /api/credentials`, `DELETE /api/credentials/:key`
+- `GET /api/providers/:provider/models`
+- `POST /api/upload`, `GET /api/download/:fileId`, `POST /api/export`, `POST /api/import`
+
 ### Frontend State
 
 Three Zustand stores in `src/stores/`:
@@ -58,11 +111,15 @@ Three Zustand stores in `src/stores/`:
 
 WebSocket connection is managed by `src/hooks/use-websocket.tsx`, which dispatches incoming messages to the appropriate store. The WebSocket client (`src/lib/websocket-client.ts`) handles fragment reassembly on the client side.
 
+Frontend components are organized by domain: `src/components/layout/`, `chat/`, `agents/`, `settings/`, `ui/`. Pages live in `src/app/chat/`, `src/app/agents/`, `src/app/settings/`.
+
 ### Database
 
-SQLite via `better-sqlite3` + Drizzle ORM. Schema in `server/db/schema.ts`, migrations in `server/db/migrations/`. Data access through repository pattern in `server/db/repositories/`.
+SQLite via `better-sqlite3` + Drizzle ORM. Schema in `server/db/schema.ts`, migrations in `server/db/migrations/`, config in `drizzle.config.ts`. Data access through repository pattern in `server/db/repositories/`.
 
-DB file location: `./data/jragentmesh.db`
+Tables: `conversations`, `messages`, `agentProcesses`, `agentOutputs`, `credentials`, `settings`, `fileTransfers`.
+
+DB file location: `./data/jragentmesh.db`. A cleanup job runs hourly (expired file transfers, agent outputs >30 days, SQLite VACUUM).
 
 ### Path Aliases
 
@@ -78,6 +135,10 @@ DB file location: `./data/jragentmesh.db`
 - Backend: `dist/` (TypeScript compilation from `tsconfig.server.json`)
 - Backend imports use `.js` extensions (ESM resolution)
 
+### Patches
+
+`patches/@mariozechner+pi-agent-core+0.52.10.patch` adds error recovery to the agent loop — wraps streaming promises with `.catch()` to prevent hangs when LLM calls fail. Applied automatically via `patch-package` on `npm install` (postinstall script).
+
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` — Required for the built-in self-agent
@@ -90,7 +151,7 @@ DB file location: `./data/jragentmesh.db`
 This project has a pre-generated index for quick codebase understanding.
 
 - **Location:** `.claude-index/index.md`
-- **Last Updated:** 2026-02-13
+- **Last Updated:** 2026-02-14
 - **Contents:** Project overview, feature map, file index, exported symbols, module dependencies
 
 **Usage:** Read `.claude-index/index.md` to quickly understand the project structure before making changes. The index provides a navigation map of the codebase without needing to explore every file.
