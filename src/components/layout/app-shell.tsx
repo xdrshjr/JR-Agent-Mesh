@@ -4,6 +4,7 @@ import { WebSocketProvider, useWebSocketClient } from '@/hooks/use-websocket';
 import { useAgentStore } from '@/stores/agent-store';
 import { useSettingsStore } from '@/stores/settings-store';
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts';
+import { useRoutePrefetch } from '@/hooks/use-route-prefetch';
 import { MobileGuard } from './mobile-guard';
 import { TopBar } from './top-bar';
 import { Sidebar } from './sidebar';
@@ -16,6 +17,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   const setSoundEnabled = useSettingsStore((s) => s.setSoundEnabled);
 
   useKeyboardShortcuts();
+  useRoutePrefetch();
 
   return (
     <MobileGuard>
