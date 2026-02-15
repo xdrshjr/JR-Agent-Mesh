@@ -6,9 +6,9 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
 import { useSelfAgent } from '@/hooks/use-self-agent';
-import { useSettingsStore, CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
+import { useSettingsStore, CREDENTIAL_TYPES, CODING_PLAN_CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
 import { useSkillStore } from '@/stores/skill-store';
-import { MODELS } from '@/lib/model-options';
+import { MODELS, CODING_PLAN_BASE_PROVIDERS } from '@/lib/model-options';
 import { SkillViewDialog } from './skill-view-dialog';
 
 export function ModelSelector() {
@@ -33,7 +33,8 @@ export function ModelSelector() {
   // Auto-detect models when provider has credentials but no detected models
   useEffect(() => {
     if (detectedModels[provider]) return;
-    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider);
+    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider)
+      || CODING_PLAN_CREDENTIAL_TYPES.find((t) => t.provider === provider);
     const credInfo = credType
       ? credentials.find((c) => c.key === credType.key)
       : credentials.find((c) => c.provider === provider);
@@ -54,9 +55,9 @@ export function ModelSelector() {
   }, [credentials, provider]);
 
   const models = useMemo(() => {
-    // Prefer detected models, fall back to static list
+    // Prefer detected models, fall back to static list (with CP base provider fallback)
     const detected = detectedModels[provider];
-    const base = detected?.length ? detected : MODELS[provider] || [];
+    const base = detected?.length ? detected : MODELS[provider] || MODELS[CODING_PLAN_BASE_PROVIDERS[provider]] || [];
 
     // If current model isn't in the list, append it so SelectValue can render
     if (model && !base.some((m) => m.id === model)) {
@@ -72,7 +73,7 @@ export function ModelSelector() {
         value={provider}
         onValueChange={(val) => {
           const detectedForVal = detectedModels[val];
-          const list = detectedForVal?.length ? detectedForVal : MODELS[val] || [];
+          const list = detectedForVal?.length ? detectedForVal : MODELS[val] || MODELS[CODING_PLAN_BASE_PROVIDERS[val]] || [];
           const firstModel = list[0]?.id || '';
           switchModel(val, firstModel);
         }}

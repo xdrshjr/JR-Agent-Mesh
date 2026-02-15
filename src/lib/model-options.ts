@@ -44,6 +44,27 @@ export const MODELS: Record<string, { id: string; name: string }[]> = {
   ],
 };
 
+export const CODING_PLAN_PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  cp_openai: 'https://api.openai.com/v1',
+  cp_anthropic: 'https://api.anthropic.com',
+  cp_google: 'https://generativelanguage.googleapis.com',
+  cp_kimi: 'https://api.kimi.com/coding',
+};
+
+export const CODING_PLAN_PROVIDERS = [
+  { id: 'cp_openai', name: 'OpenAI Coding Plan' },
+  { id: 'cp_anthropic', name: 'Anthropic Coding Plan' },
+  { id: 'cp_google', name: 'Google Gemini Coding Plan' },
+  { id: 'cp_kimi', name: 'Kimi Coding Plan' },
+] as const;
+
+export const CODING_PLAN_BASE_PROVIDERS: Record<string, string> = {
+  cp_openai: 'openai',
+  cp_anthropic: 'anthropic',
+  cp_google: 'google',
+  cp_kimi: 'anthropic',
+};
+
 export type CustomApiMode = 'openai' | 'anthropic';
 
 export const CUSTOM_API_MODES: { id: CustomApiMode; name: string; description: string }[] = [

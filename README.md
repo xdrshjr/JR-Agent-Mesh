@@ -56,7 +56,7 @@ Create a `.env` file in the project root:
 ANTHROPIC_API_KEY=your_anthropic_api_key
 
 # Optional
-PORT=3000          # Server port (default: 3000)
+PORT=3010          # Server port (default: 3010)
 DATA_DIR=./data    # Data directory (default: ./data)
 ```
 
@@ -70,7 +70,7 @@ API keys for external agents (Claude Code, OpenCode, Codex) can also be configur
 npm run dev
 ```
 
-The app will be available at [http://localhost:3000](http://localhost:3000).
+The app will be available at [http://localhost:3010](http://localhost:3010).
 
 ### Production
 

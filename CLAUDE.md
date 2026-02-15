@@ -181,7 +181,7 @@ Chat messages support interleaved content blocks (text, thinking, tool_use) via 
 ## Environment Variables
 
 - `ANTHROPIC_API_KEY` — Required for the built-in self-agent
-- `PORT` — Server port (default: 3000)
+- `PORT` — Server port (default: 3010)
 - `DATA_DIR` — Data directory (default: `./data`)
 - `ENCRYPTION_KEY` — Auto-generated and persisted to `.env` if missing
 

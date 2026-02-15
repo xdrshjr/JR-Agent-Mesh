@@ -281,6 +281,7 @@ export function createExpressApp(options: ExpressAppOptions) {
         'self_agent.custom_model_id',
         'self_agent.provider_api_urls',
         'self_agent.custom_api_mode',
+        'coding_plan.provider_api_urls',
       ];
       if (keys.some((k) => modelRelatedKeys.includes(k))) {
         if (selfAgentService) {
@@ -375,6 +376,10 @@ export function createExpressApp(options: ExpressAppOptions) {
         xai: 'xai_key',
         groq: 'groq_key',
         custom: 'custom_key',
+        cp_openai: 'cp_openai_key',
+        cp_anthropic: 'cp_anthropic_key',
+        cp_google: 'cp_google_key',
+        cp_kimi: 'cp_kimi_key',
       };
 
       // For predefined providers use the map; for custom providers the key IS the provider id
@@ -389,7 +394,10 @@ export function createExpressApp(options: ExpressAppOptions) {
 
       // Look up override URL from settings
       let overrideUrl: string | undefined;
-      const urlsJson = settingsRepo.get('self_agent.provider_api_urls');
+      const urlSettingsKey = provider.startsWith('cp_')
+        ? 'coding_plan.provider_api_urls'
+        : 'self_agent.provider_api_urls';
+      const urlsJson = settingsRepo.get(urlSettingsKey);
       if (urlsJson) {
         try {
           const urls = JSON.parse(urlsJson);

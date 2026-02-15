@@ -19,7 +19,7 @@ import { registerAgentHandlers } from './websocket/agent-handlers.js';
 import { startCleanupJob, stopCleanupJob } from './db/cleanup.js';
 import { SkillManagementService } from './services/skill-management.js';
 
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const PORT = parseInt(process.env.PORT || '3010', 10);
 const DATA_DIR = resolve(process.env.DATA_DIR || './data');
 const DB_PATH = resolve(DATA_DIR, 'jragentmesh.db');
 const ENV_PATH = resolve('.env');
@@ -182,7 +182,7 @@ function ensureEncryptionKey() {
       const cleaned = content.replace(/^ENCRYPTION_KEY=.*$/m, '').replace(/\n{3,}/g, '\n\n');
       writeFileSync(ENV_PATH, cleaned.trimEnd() + `\nENCRYPTION_KEY=${key}\n`);
     } else {
-      writeFileSync(ENV_PATH, `PORT=3000\nDATA_DIR=./data\nENCRYPTION_KEY=${key}\n`);
+      writeFileSync(ENV_PATH, `PORT=3010\nDATA_DIR=./data\nENCRYPTION_KEY=${key}\n`);
     }
   } catch (err) {
     logger.error('Server', 'Failed to write encryption key to .env', err);

@@ -171,6 +171,10 @@ export class SelfAgentService {
       xai: 'xai_key',
       groq: 'groq_key',
       custom: 'custom_key',
+      cp_openai: 'cp_openai_key',
+      cp_anthropic: 'cp_anthropic_key',
+      cp_google: 'cp_google_key',
+      cp_kimi: 'cp_kimi_key',
     };
 
     // For predefined providers use the map; for custom providers the key IS the provider id
@@ -187,9 +191,12 @@ export class SelfAgentService {
 
   private getProviderApiUrl(provider: string): string | undefined {
     try {
+      const settingsKey = provider.startsWith('cp_')
+        ? 'coding_plan.provider_api_urls'
+        : 'self_agent.provider_api_urls';
       const db = getDb();
       const row = db.select().from(schema.settings)
-        .where(eq(schema.settings.key, 'self_agent.provider_api_urls'))
+        .where(eq(schema.settings.key, settingsKey))
         .get();
       if (row?.value) {
         const urls = JSON.parse(row.value);
@@ -204,10 +211,56 @@ export class SelfAgentService {
     return undefined;
   }
 
+  private static CODING_PLAN_BASE: Record<string, string> = {
+    cp_openai: 'openai',
+    cp_anthropic: 'anthropic',
+    cp_google: 'google',
+    cp_kimi: 'anthropic',
+  };
+
+  private static CODING_PLAN_DEFAULT_URLS: Record<string, string> = {
+    cp_openai: 'https://api.openai.com/v1',
+    cp_anthropic: 'https://api.anthropic.com',
+    cp_google: 'https://generativelanguage.googleapis.com',
+    cp_kimi: 'https://api.kimi.com/coding',
+  };
+
   private resolveModel(provider: string, modelId: string): Model<any> {
     // Handle custom provider — construct Model object from DB settings
     if (provider === 'custom') {
       return this.buildCustomModel();
+    }
+
+    // Handle coding plan providers — resolve via base provider's model registry
+    const baseProvider = SelfAgentService.CODING_PLAN_BASE[provider];
+    if (baseProvider) {
+      const overrideUrl = this.getProviderApiUrl(provider);
+      const defaultUrl = SelfAgentService.CODING_PLAN_DEFAULT_URLS[provider];
+      const baseModels = getModels(baseProvider as any);
+      if (baseModels.length > 0) {
+        const found = baseModels.find((m) => m.id === modelId);
+        const template = found || baseModels[0];
+        return {
+          ...template,
+          id: modelId,
+          name: found?.name || modelId,
+          provider,
+          baseUrl: overrideUrl || defaultUrl || '',
+        };
+      }
+      // Fallback: construct model object manually
+      return {
+        id: modelId,
+        name: modelId,
+        api: baseProvider === 'google' ? 'google-generative' : (baseProvider === 'anthropic' ? 'anthropic-messages' : 'openai-completions'),
+        provider,
+        baseUrl: overrideUrl || defaultUrl || '',
+        reasoning: false,
+        input: ['text', 'image'] as ('text' | 'image')[],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128000,
+        maxTokens: 4096,
+      };
     }
 
     const models = getModels(provider as any);

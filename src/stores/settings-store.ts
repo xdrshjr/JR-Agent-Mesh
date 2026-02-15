@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { PROVIDERS } from '@/lib/model-options';
+import { PROVIDERS, CODING_PLAN_PROVIDERS } from '@/lib/model-options';
 
 // --- Credential Types ---
 
@@ -56,6 +56,37 @@ export const CREDENTIAL_TYPES: CredentialType[] = [
   },
 ];
 
+export const CODING_PLAN_CREDENTIAL_TYPES: CredentialType[] = [
+  {
+    key: 'cp_openai_key',
+    displayName: 'OpenAI Coding Plan',
+    provider: 'cp_openai',
+    placeholder: 'sk-...',
+    description: 'OpenAI API key for coding agents',
+  },
+  {
+    key: 'cp_anthropic_key',
+    displayName: 'Anthropic Coding Plan',
+    provider: 'cp_anthropic',
+    placeholder: 'sk-ant-...',
+    description: 'Anthropic API key for coding agents',
+  },
+  {
+    key: 'cp_google_key',
+    displayName: 'Google Gemini Coding Plan',
+    provider: 'cp_google',
+    placeholder: 'AIza...',
+    description: 'Google AI API key for coding agents',
+  },
+  {
+    key: 'cp_kimi_key',
+    displayName: 'Kimi Coding Plan',
+    provider: 'cp_kimi',
+    placeholder: 'sk-kimi-...',
+    description: 'Kimi API key for coding agents',
+  },
+];
+
 // --- Credential Info (from server) ---
 
 export interface CredentialInfo {
@@ -74,6 +105,7 @@ interface SettingsState {
   defaultProvider: string;
   defaultModel: string;
   providerApiUrls: Record<string, string>;
+  codingPlanApiUrls: Record<string, string>;
   customModelId: string;
   customApiMode: 'openai' | 'anthropic';
   systemPrompt: string;
@@ -106,6 +138,7 @@ interface SettingsState {
   setDefaultProvider: (provider: string) => void;
   setDefaultModel: (model: string) => void;
   setProviderApiUrl: (provider: string, url: string) => void;
+  setCodingPlanApiUrl: (provider: string, url: string) => void;
   setCustomModelId: (id: string) => void;
   setCustomApiMode: (mode: 'openai' | 'anthropic') => void;
   setSystemPrompt: (prompt: string) => void;
@@ -131,6 +164,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   defaultProvider: 'anthropic',
   defaultModel: 'claude-sonnet-4-5-20250929',
   providerApiUrls: {},
+  codingPlanApiUrls: {},
   customModelId: '',
   customApiMode: 'openai',
   systemPrompt: '',
@@ -162,6 +196,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setProviderApiUrl: (provider, url) =>
     set((s) => ({
       providerApiUrls: { ...s.providerApiUrls, [provider]: url },
+    })),
+  setCodingPlanApiUrl: (provider, url) =>
+    set((s) => ({
+      codingPlanApiUrls: { ...s.codingPlanApiUrls, [provider]: url },
     })),
   setCustomModelId: (id) => set({ customModelId: id }),
   setCustomApiMode: (mode) => set((s) => {
@@ -200,6 +238,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
       const notification = data.notification || {};
       const agent = data.agent || {};
       const general = data.general || {};
+      const codingPlan = data.coding_plan || {};
 
       // Parse per-provider API URLs
       let providerApiUrls: Record<string, string> = {};
@@ -213,10 +252,19 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         providerApiUrls['custom'] = selfAgent.custom_url;
       }
 
+      // Parse coding plan provider API URLs
+      let codingPlanApiUrls: Record<string, string> = {};
+      if (codingPlan.provider_api_urls) {
+        try {
+          codingPlanApiUrls = JSON.parse(codingPlan.provider_api_urls);
+        } catch { /* ignore parse errors */ }
+      }
+
       set({
         defaultProvider: selfAgent.provider ?? 'anthropic',
         defaultModel: selfAgent.model ?? 'claude-sonnet-4-5-20250929',
         providerApiUrls,
+        codingPlanApiUrls,
         customModelId: selfAgent.custom_model_id ?? '',
         customApiMode: selfAgent.custom_api_mode === 'anthropic' ? 'anthropic' : 'openai',
         systemPrompt: selfAgent.system_prompt ?? '',
@@ -265,6 +313,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         'general.conversation_retention_days': String(state.dataRetentionDays),
         'general.agent_log_retention_days': String(state.agentLogRetentionDays),
         'agent.cli_paths': JSON.stringify(state.agentConfigs),
+        'coding_plan.provider_api_urls': JSON.stringify(state.codingPlanApiUrls),
       };
 
       const res = await fetch('/api/settings', {
@@ -294,7 +343,8 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   saveCredential: async (key: string, value: string, displayName?: string, provider?: string) => {
-    const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
+    const credType = CREDENTIAL_TYPES.find((t) => t.key === key)
+      || CODING_PLAN_CREDENTIAL_TYPES.find((t) => t.key === key);
     const affectedProvider = provider ?? credType?.provider;
     try {
       const res = await fetch(`/api/credentials/${key}`, {
@@ -385,6 +435,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
 // --- Shared Utilities ---
 
 const predefinedProviderIds = new Set<string>(PROVIDERS.map((p) => p.id));
+const codingPlanProviderIds = new Set<string>(CODING_PLAN_CREDENTIAL_TYPES.map((t) => t.provider));
 
 /**
  * Build a merged provider list: static PROVIDERS + custom credential providers.
@@ -392,7 +443,7 @@ const predefinedProviderIds = new Set<string>(PROVIDERS.map((p) => p.id));
  */
 export function buildProviderList(credentials: CredentialInfo[]): { id: string; name: string }[] {
   const customProviders = credentials
-    .filter((c) => c.hasValue && c.provider && !predefinedProviderIds.has(c.provider))
+    .filter((c) => c.hasValue && c.provider && !predefinedProviderIds.has(c.provider) && !codingPlanProviderIds.has(c.provider))
     .map((c) => {
       const raw = c.displayName || c.provider!;
       const name = raw.replace(/\s*api\s*key\s*$/i, '').trim() || raw;
@@ -404,5 +455,11 @@ export function buildProviderList(credentials: CredentialInfo[]): { id: string; 
     seen.add(p.id);
     return true;
   });
-  return [...PROVIDERS, ...unique];
+
+  // Add coding plan providers that have configured credentials
+  const activeCodingPlan = CODING_PLAN_PROVIDERS.filter((cp) =>
+    credentials.some((c) => c.provider === cp.id && c.hasValue)
+  );
+
+  return [...PROVIDERS, ...activeCodingPlan, ...unique];
 }

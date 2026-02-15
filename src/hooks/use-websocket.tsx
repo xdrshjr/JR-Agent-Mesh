@@ -237,7 +237,7 @@ export function WebSocketProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host || `${window.location.hostname}:3000`;
+    const host = window.location.host || `${window.location.hostname}:3010`;
     const wsUrl = `${protocol}//${host}/ws`;
     const client = new WebSocketClient(wsUrl);
     clientRef.current = client;

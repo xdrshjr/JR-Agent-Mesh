@@ -5,6 +5,7 @@ import { Pencil, Trash2, ShieldAlert, Key, Loader2, Plus } from 'lucide-react';
 import {
   useSettingsStore,
   CREDENTIAL_TYPES,
+  CODING_PLAN_CREDENTIAL_TYPES,
 } from '@/stores/settings-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,7 +17,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { PROVIDER_DEFAULT_URLS } from '@/lib/model-options';
+import { PROVIDER_DEFAULT_URLS, CODING_PLAN_PROVIDER_DEFAULT_URLS } from '@/lib/model-options';
 
 interface CredentialDisplayItem {
   key: string;
@@ -39,20 +40,27 @@ function toCredentialKey(name: string): string {
     .replace(/^_|_$/g, '');
 }
 
-const predefinedKeys = new Set(CREDENTIAL_TYPES.map((t) => t.key));
+const predefinedKeys = new Set([
+  ...CREDENTIAL_TYPES.map((t) => t.key),
+  ...CODING_PLAN_CREDENTIAL_TYPES.map((t) => t.key),
+]);
 
 export function CredentialEditor() {
   const credentials = useSettingsStore((s) => s.credentials);
   const providerApiUrls = useSettingsStore((s) => s.providerApiUrls);
+  const codingPlanApiUrls = useSettingsStore((s) => s.codingPlanApiUrls);
   const fetchCredentials = useSettingsStore((s) => s.fetchCredentials);
   const saveCredential = useSettingsStore((s) => s.saveCredential);
   const deleteCredential = useSettingsStore((s) => s.deleteCredential);
   const setProviderApiUrl = useSettingsStore((s) => s.setProviderApiUrl);
+  const setCodingPlanApiUrl = useSettingsStore((s) => s.setCodingPlanApiUrl);
   const saveSettings = useSettingsStore((s) => s.saveSettings);
   const detectModels = useSettingsStore((s) => s.detectModels);
   const isDetectingModels = useSettingsStore((s) => s.isDetectingModels);
   const customApiMode = useSettingsStore((s) => s.customApiMode);
 
+  const [activeTab, setActiveTab] = useState<'standard' | 'coding-plan'>('standard');
+  const [editingIsCodingPlan, setEditingIsCodingPlan] = useState(false);
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
   const [editUrl, setEditUrl] = useState('');
@@ -109,19 +117,38 @@ export function CredentialEditor() {
     return [...predefined, ...custom];
   }, [credentials, customApiMode]);
 
+  // Build coding plan display list
+  const codingPlanItems = useMemo<CredentialDisplayItem[]>(() => {
+    return CODING_PLAN_CREDENTIAL_TYPES.map((type) => {
+      const serverCred = credentials.find((c) => c.key === type.key);
+      return {
+        ...type,
+        hasValue: serverCred?.hasValue || false,
+        maskedValue: serverCred?.maskedValue || null,
+        updatedAt: serverCred?.updatedAt || null,
+        isCustom: false,
+      };
+    });
+  }, [credentials]);
+
   // Track which item is being edited (for the edit dialog)
-  const editingItem = credentialItems.find((t) => t.key === editKey);
+  const allItems = [...credentialItems, ...codingPlanItems];
+  const editingItem = allItems.find((t) => t.key === editKey);
   const editingIsCustom = editingItem?.isCustom ?? false;
   const editingProvider = editingItem?.provider;
   const isTesting = editingProvider ? (isDetectingModels[editingProvider] || false) : false;
 
-  const handleEdit = (key: string) => {
-    const item = credentialItems.find((t) => t.key === key);
+  const handleEdit = (key: string, isCodingPlan = false) => {
+    const item = allItems.find((t) => t.key === key);
     const credType = CREDENTIAL_TYPES.find((t) => t.key === key);
+    const cpCredType = CODING_PLAN_CREDENTIAL_TYPES.find((t) => t.key === key);
     setEditKey(key);
     setEditValue('');
-    // For predefined items, load from providerApiUrls; for custom items, load from providerApiUrls by provider
-    if (credType) {
+    setEditingIsCodingPlan(isCodingPlan);
+    // For coding plan items, load from codingPlanApiUrls; for standard, load from providerApiUrls
+    if (cpCredType) {
+      setEditUrl(codingPlanApiUrls[cpCredType.provider] || '');
+    } else if (credType) {
       setEditUrl(providerApiUrls[credType.provider] || '');
     } else if (item) {
       setEditUrl(providerApiUrls[item.provider] || '');
@@ -134,11 +161,13 @@ export function CredentialEditor() {
   const handleSave = async () => {
     if (!editKey) return;
     const credType = CREDENTIAL_TYPES.find((t) => t.key === editKey);
-    const item = credentialItems.find((t) => t.key === editKey);
-    const provider = credType?.provider || item?.provider;
+    const cpCredType = CODING_PLAN_CREDENTIAL_TYPES.find((t) => t.key === editKey);
+    const item = allItems.find((t) => t.key === editKey);
+    const provider = cpCredType?.provider || credType?.provider || item?.provider;
 
-    // At least one of URL or key value should be provided to save
-    const hasUrlChange = provider && editUrl.trim() !== (providerApiUrls[provider] || '');
+    // Determine current URL source based on credential type
+    const currentUrls = editingIsCodingPlan ? codingPlanApiUrls : providerApiUrls;
+    const hasUrlChange = provider && editUrl.trim() !== (currentUrls[provider] || '');
     const hasKeyValue = editValue.trim().length > 0;
 
     if (!hasUrlChange && !hasKeyValue) return;
@@ -147,14 +176,17 @@ export function CredentialEditor() {
     try {
       // Save URL if changed
       if (provider && hasUrlChange) {
-        setProviderApiUrl(provider, editUrl.trim());
+        if (editingIsCodingPlan) {
+          setCodingPlanApiUrl(provider, editUrl.trim());
+        } else {
+          setProviderApiUrl(provider, editUrl.trim());
+        }
         await saveSettings();
       }
 
       // Save key if provided
       if (hasKeyValue) {
         if (editingIsCustom && item) {
-          // Pass explicit displayName and provider for custom credentials
           await saveCredential(editKey, editValue.trim(), item.displayName, item.provider);
         } else {
           await saveCredential(editKey, editValue.trim());
@@ -227,7 +259,7 @@ export function CredentialEditor() {
 
   // --- Add Credential ---
   const generatedKey = toCredentialKey(addDisplayName);
-  const isDuplicateKey = generatedKey.length > 0 && credentialItems.some((item) => item.key === generatedKey);
+  const isDuplicateKey = generatedKey.length > 0 && (predefinedKeys.has(generatedKey) || credentialItems.some((item) => item.key === generatedKey));
 
   const resetAddDialog = () => {
     setAddOpen(false);
@@ -274,15 +306,44 @@ export function CredentialEditor() {
           <Key className="w-4 h-4 text-[var(--text-secondary)]" />
           <h4 className="text-sm font-medium text-[var(--foreground)]">API Credentials</h4>
         </div>
-        <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}>
-          <Plus className="w-3 h-3 mr-1" />
-          Add
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Tab Toggle */}
+          <div className="flex rounded-full bg-[var(--surface-secondary)] p-0.5">
+            <button
+              className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${
+                activeTab === 'standard'
+                  ? 'bg-[var(--surface)] text-[var(--foreground)] shadow-sm'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+              }`}
+              onClick={() => setActiveTab('standard')}
+            >
+              Standard API
+            </button>
+            <button
+              className={`px-2.5 py-1 text-xs font-medium rounded-full transition-all ${
+                activeTab === 'coding-plan'
+                  ? 'bg-[var(--surface)] text-[var(--foreground)] shadow-sm'
+                  : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
+              }`}
+              onClick={() => setActiveTab('coding-plan')}
+            >
+              Coding Plan
+            </button>
+          </div>
+          {activeTab === 'standard' && (
+            <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}>
+              <Plus className="w-3 h-3 mr-1" />
+              Add
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="space-y-2">
-        {credentialItems.map((item) => {
-          const customUrl = providerApiUrls[item.provider];
+        {(activeTab === 'standard' ? credentialItems : codingPlanItems).map((item) => {
+          const isCp = activeTab === 'coding-plan';
+          const urlMap = isCp ? codingPlanApiUrls : providerApiUrls;
+          const customUrl = urlMap[item.provider];
           return (
             <div
               key={item.key}
@@ -313,7 +374,7 @@ export function CredentialEditor() {
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7"
-                  onClick={() => handleEdit(item.key)}
+                  onClick={() => handleEdit(item.key, isCp)}
                   title={item.hasValue ? 'Update' : 'Set'}
                 >
                   <Pencil className="w-3 h-3 text-[var(--text-secondary)]" />
@@ -362,11 +423,13 @@ export function CredentialEditor() {
                 type="text"
                 value={editUrl}
                 onChange={(e) => setEditUrl(e.target.value)}
-                placeholder={editingProvider ? (PROVIDER_DEFAULT_URLS[editingProvider] || 'https://api.example.com/v1') : ''}
+                placeholder={editingProvider
+                  ? ((editingIsCodingPlan ? CODING_PLAN_PROVIDER_DEFAULT_URLS[editingProvider] : PROVIDER_DEFAULT_URLS[editingProvider]) || 'https://api.example.com/v1')
+                  : ''}
               />
               <p className="text-xs text-[var(--text-muted)]">
-                {editingProvider && PROVIDER_DEFAULT_URLS[editingProvider]
-                  ? `Leave empty to use default: ${PROVIDER_DEFAULT_URLS[editingProvider]}`
+                {editingProvider && (editingIsCodingPlan ? CODING_PLAN_PROVIDER_DEFAULT_URLS[editingProvider] : PROVIDER_DEFAULT_URLS[editingProvider])
+                  ? `Leave empty to use default: ${editingIsCodingPlan ? CODING_PLAN_PROVIDER_DEFAULT_URLS[editingProvider] : PROVIDER_DEFAULT_URLS[editingProvider]}`
                   : 'Enter the API endpoint URL for this provider'}
               </p>
             </div>
@@ -400,8 +463,8 @@ export function CredentialEditor() {
             )}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
-            {/* Hide Test Connection for custom (user-added) credentials */}
-            {!editingIsCustom && (
+            {/* Hide Test Connection for custom (user-added) and coding plan credentials */}
+            {!editingIsCustom && !editingIsCodingPlan && (
               <Button
                 variant="outline"
                 onClick={handleTestConnection}
@@ -421,7 +484,7 @@ export function CredentialEditor() {
             <Button variant="outline" onClick={() => { setEditKey(null); setTestResult(null); }} disabled={isSaving}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={(!editValue.trim() && editUrl.trim() === (editingProvider ? (providerApiUrls[editingProvider] || '') : '')) || isSaving}>
+            <Button onClick={handleSave} disabled={(!editValue.trim() && editUrl.trim() === (editingProvider ? ((editingIsCodingPlan ? codingPlanApiUrls : providerApiUrls)[editingProvider] || '') : '')) || isSaving}>
               {isSaving ? 'Saving...' : 'Save'}
             </Button>
           </DialogFooter>

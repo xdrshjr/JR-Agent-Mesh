@@ -10,6 +10,20 @@ const PROVIDER_DEFAULT_URLS: Record<string, string> = {
   custom: '',
 };
 
+const CODING_PLAN_PROVIDER_DEFAULT_URLS: Record<string, string> = {
+  cp_openai: 'https://api.openai.com/v1',
+  cp_anthropic: 'https://api.anthropic.com',
+  cp_google: 'https://generativelanguage.googleapis.com',
+  cp_kimi: 'https://api.kimi.com/coding',
+};
+
+const CODING_PLAN_BASE_PROVIDER: Record<string, string> = {
+  cp_openai: 'openai',
+  cp_anthropic: 'anthropic',
+  cp_google: 'google',
+  cp_kimi: 'anthropic',
+};
+
 // Model ID patterns to filter out non-chat models from OpenAI-compatible APIs
 const NON_CHAT_PATTERNS = [
   /^text-embedding/i,
@@ -52,7 +66,7 @@ export async function detectProviderModels(
   overrideUrl?: string,
   apiMode?: string,
 ): Promise<DetectionResult> {
-  const baseUrl = (overrideUrl?.trim() || PROVIDER_DEFAULT_URLS[provider] || '').replace(/\/+$/, '');
+  const baseUrl = (overrideUrl?.trim() || PROVIDER_DEFAULT_URLS[provider] || CODING_PLAN_PROVIDER_DEFAULT_URLS[provider] || '').replace(/\/+$/, '');
 
   if (!baseUrl) {
     return { models: [], error: 'No API URL configured for this provider' };
@@ -76,9 +90,15 @@ export async function detectProviderModels(
         return apiMode === 'anthropic'
           ? await detectAnthropic(baseUrl, apiKey)
           : await detectOpenAICompat(baseUrl, apiKey);
-      default:
+      default: {
+        // Coding plan providers — route to correct detection based on base provider
+        const baseProv = CODING_PLAN_BASE_PROVIDER[provider];
+        if (baseProv === 'anthropic') return await detectAnthropic(baseUrl, apiKey);
+        if (baseProv === 'google') return await detectGoogle(baseUrl, apiKey);
+        if (baseProv) return await detectOpenAICompat(baseUrl, apiKey);
         // Custom credential providers — default to OpenAI-compatible detection
         return await detectOpenAICompat(baseUrl, apiKey);
+      }
     }
   } catch (err: any) {
     logger.error('ModelDetection', `Failed to detect models for ${provider}`, err);

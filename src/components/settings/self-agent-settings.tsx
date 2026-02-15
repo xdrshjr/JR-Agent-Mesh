@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
-import { useSettingsStore, CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
+import { useSettingsStore, CREDENTIAL_TYPES, CODING_PLAN_CREDENTIAL_TYPES, buildProviderList } from '@/stores/settings-store';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import {
   SelectItem,
   SelectValue,
 } from '@/components/ui/select';
-import { MODELS, CUSTOM_API_MODES } from '@/lib/model-options';
+import { MODELS, CUSTOM_API_MODES, CODING_PLAN_BASE_PROVIDERS } from '@/lib/model-options';
 
 const DEFAULT_SYSTEM_PROMPT = '';
 
@@ -28,7 +28,7 @@ export function SelfAgentSettings() {
   );
 
   const detected = store.detectedModels[provider];
-  const baseList = detected?.length ? detected : MODELS[provider] || [];
+  const baseList = detected?.length ? detected : MODELS[provider] || MODELS[CODING_PLAN_BASE_PROVIDERS[provider]] || [];
   // If current model isn't in the list, append it so SelectValue can render
   const modelList = store.defaultModel && !baseList.some((m) => m.id === store.defaultModel)
     ? [...baseList, { id: store.defaultModel, name: store.defaultModel }]
@@ -44,8 +44,9 @@ export function SelfAgentSettings() {
   // Auto-detect models when provider changes or detected models were invalidated
   useEffect(() => {
     if (store.detectedModels[provider]) return; // already detected
-    // Find matching credential: predefined or custom (provider matches)
-    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider);
+    // Find matching credential: predefined, coding plan, or custom (provider matches)
+    const credType = CREDENTIAL_TYPES.find((t) => t.provider === provider)
+      || CODING_PLAN_CREDENTIAL_TYPES.find((t) => t.provider === provider);
     const credInfo = credType
       ? store.credentials.find((c) => c.key === credType.key)
       : store.credentials.find((c) => c.provider === provider);
@@ -71,7 +72,7 @@ export function SelfAgentSettings() {
               onValueChange={(val) => {
                 store.setDefaultProvider(val);
                 const detectedForProvider = store.detectedModels[val];
-                const list = detectedForProvider?.length ? detectedForProvider : MODELS[val] || [];
+                const list = detectedForProvider?.length ? detectedForProvider : MODELS[val] || MODELS[CODING_PLAN_BASE_PROVIDERS[val]] || [];
                 const firstModel = list[0]?.id || '';
                 if (firstModel) store.setDefaultModel(firstModel);
               }}
